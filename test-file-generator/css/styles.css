@@ -1,0 +1,14 @@
+body { font-family: system-ui, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f9f9f9; color: #333; }
+h1 { text-align: center; color: #2c3e50; }
+.card { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+label { display: block; margin: 1.5rem 0 0.5rem; font-weight: 600; }
+select, input[type="number"] { width: 100%; padding: 0.8rem; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem; }
+.size-group { display: flex; gap: 12px; }
+.size-group input { flex: 1; }
+.size-group select { width: 120px; }
+button { margin-top: 2.2rem; width: 100%; padding: 1rem; font-size: 1.15rem; font-weight: bold; color: white; background: #3498db; border: none; border-radius: 8px; cursor: pointer; }
+button:hover { background: #2980b9; }
+button:disabled { background: #aaa; cursor: not-allowed; }
+#status { margin-top: 1.8rem; text-align: center; color: #555; min-height: 1.6em; }
+.warning { color: #e67e22; font-size: 0.95rem; margin-top: 1rem; }
+footer { text-align: center; margin-top: 4rem; color: #888; font-size: 0.9rem; }

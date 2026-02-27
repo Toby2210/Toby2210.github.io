@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>測試檔案生成器（精準大小版）</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+  <h1>測試檔案生成器（大小精準）</h1>
+
+  <div class="card">
+    <label>1. 檔案格式</label>
+    <select id="format">
+      <option value="jpg">圖片 — JPG</option>
+      <option value="png" selected>圖片 — PNG</option>
+      <option value="gif">圖片 — GIF</option>
+      <option value="pdf">文件 — PDF</option>
+      <option value="docx">文件 — Word (docx)</option>
+    </select>
+
+    <label>2. 檔案大小</label>
+    <div class="size-group">
+      <input type="number" id="sizeValue" min="1" step="any" value="2000" />
+      <select id="sizeUnit">
+        <option value="KB">KB</option>
+        <option value="MB" selected>MB</option>
+        <option value="GB">GB</option>
+      </select>
+    </div>
+    <div class="warning">※ 超過 1GB 需足夠記憶體，生成可能需數秒～數分鐘。檔案內容為隨機資料（測試用，非有效圖片/文件）。</div>
+    
+    <button id="generateButton">生成檔案</button>
+    <div id="status"></div>
+  </div>
+
+  <footer>
+    <p>© 2023 測試檔案生成器</p>
+  </footer>
+
+  <script src="js/script.js"></script>
+</body>
+</html>
