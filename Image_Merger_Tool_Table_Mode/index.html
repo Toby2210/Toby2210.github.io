@@ -48,7 +48,7 @@
   <meta name="description" content="免費的圖片合併工具，快速合併多張圖片為一張，支援中文與英文。Free Image Merger Tool for combining multiple images into one, supporting both Chinese and English.">
   <meta name="keywords" content="圖片合併, Image Merger, 圖片工具, 合併圖片, Image Tool, 合併工具, Free Image Merger, 免費圖片合併, 免費工具, Free Tool">
   <meta name="privacy" content="This tool does not store uploaded content. All operations are performed locally.">
-  <title id="title">圖片合併工具 - Image Merger Tool | 免費在線圖片拼接與合併工具</title>
+  <title>圖片合併工具 - Image Merger Tool | 免費在線圖片拼接與合併工具</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -318,6 +318,15 @@
     #originalModeSettings.hidden {
       display: none;
     }
+    #originalResultContainer {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      margin: 20px 0;
+    }
+    #originalResultContainer.show {
+      display: flex;
+    }
   </style>
 </head>
 <body>
@@ -347,7 +356,8 @@
         mergeTable: "合併表格圖片",
         selectImages: "選擇圖片",
         dragToTable: "拖放到表格",
-        cellNumber: "格子 "
+        cellNumber: "格子 ",
+        privacyNotice: "注意：這個工具不會存起上傳的內容，所有操作均在本地完成，確保您的隱私安全。"
       },
       "en": {
         title: "Image Merger Tool",
@@ -373,7 +383,8 @@
         mergeTable: "Merge Table Images",
         selectImages: "Select images",
         dragToTable: "Drag to table",
-        cellNumber: "Cell "
+        cellNumber: "Cell ",
+        privacyNotice: "Note: This tool does not store uploaded content. All operations are performed locally to ensure your privacy."
       }
     };
   </script>
@@ -387,7 +398,7 @@
 
     // 更新文字內容
     document.title = translation.title;
-    document.getElementById("titleTitle").textContent = translation.title;
+    document.getElementById("title").textContent = translation.title;
     document.getElementById("language-label").textContent = translation.selectLanguage;
     document.getElementById("language-toggle").textContent = currentLanguage === "zh-HK" ? "中文" : "English";
     document.getElementById("imagesPerRow-label").textContent = translation.imagesPerRow;
@@ -438,6 +449,12 @@
     if (document.getElementById("tableColSpacing-label")) {
       document.getElementById("tableColSpacing-label").textContent = translation.tableColSpacing;
     }
+    if (document.getElementById("tableDownloadButton")) {
+      document.getElementById("tableDownloadButton").textContent = translation.download;
+    }
+    if (document.getElementById("privacyNotice")) {
+      document.getElementById("privacyNotice").textContent = translation.privacyNotice;
+    }
 
   }
 </script>
@@ -450,7 +467,7 @@
   <h1 id="title">圖片合併工具</h1>
   
   <!-- Mode Toggle -->
-  <div class="mode-toggle">
+  <!-- <div class="mode-toggle">
     <label>
       <input type="radio" name="mode" id="modeImagesPerRow" value="imagesPerRow">
       <span id="modeImagesPerRow-label">圖片排列模式</span>
@@ -459,7 +476,7 @@
       <input type="radio" name="mode" id="modeTable" value="table" checked>
       <span id="modeTable-label">表格模式</span>
     </label>
-  </div>
+  </div> -->
   
   <!-- Original Mode Settings -->
   <div id="originalModeSettings" class="button-container">
@@ -512,11 +529,11 @@
     </div>
   </div>
   
-  <div id="originalResultContainer" style="display: none;">
+  <div id="originalResultContainer">
     <canvas id="preview"></canvas>
     <button id="downloadButton" onclick="downloadMergedImage()">下載合併圖片</button>
   </div>
-  <p style="color: gray; font-size: 14px; text-align: center; margin-top: 10px;">
+  <p id="privacyNotice" style="color: gray; font-size: 14px; text-align: center; margin-top: 10px;">
     注意：這個工具不會存起上傳的內容，所有操作均在本地完成，確保您的隱私安全。<br>
     Note: This tool does not store uploaded content. All operations are performed locally to ensure your privacy.
   </p>
@@ -569,7 +586,7 @@
       previewCanvas.height = 0;
       ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
       document.getElementById('downloadButton').style.display = 'none';
-      document.getElementById('originalResultContainer').style.display = 'none';
+      document.getElementById('originalResultContainer').classList.remove('show');
       
       // Clear table mode canvas
       const tableCanvas = document.getElementById('tablePreview');
@@ -704,14 +721,17 @@
               };
               renderTableGrid();
             } else if (draggedCellIndex !== -1) {
-              // Dropping from another cell - swap/move
+              // Dropping from another cell - swap positions
               const sourceRow = draggedCellIndex.row;
               const sourceCol = draggedCellIndex.col;
               
               if (sourceRow !== i || sourceCol !== j) {
-                // Move image to new cell
-                tableGrid[i][j] = tableGrid[sourceRow][sourceCol];
-                tableGrid[sourceRow][sourceCol] = null;
+                // Swap images between source and target cells
+                const sourceImage = tableGrid[sourceRow][sourceCol];
+                const targetImage = tableGrid[i][j];
+                
+                tableGrid[i][j] = sourceImage;
+                tableGrid[sourceRow][sourceCol] = targetImage;
                 renderTableGrid();
               }
             }
@@ -1149,6 +1169,14 @@
 
       canvasDataUrl = canvas.toDataURL('image/png');
       downloadButton.style.display = 'inline-block';
+      
+      // Check if current mode is imagesPerRow (not table mode)
+      const currentMode = document.querySelector('input[name="mode"]:checked').value;
+      if (currentMode === 'imagesPerRow') {
+        // Hide table result, show images per row result
+        document.getElementById('tableResultContainer').classList.remove('show');
+        document.getElementById('originalResultContainer').classList.add('show');
+      }
     }
 
     // 處理畫布上的拖放
