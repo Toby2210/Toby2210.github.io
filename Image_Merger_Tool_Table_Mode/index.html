@@ -49,6 +49,8 @@
   <meta name="keywords" content="圖片合併, Image Merger, 圖片工具, 合併圖片, Image Tool, 合併工具, Free Image Merger, 免費圖片合併, 免費工具, Free Tool">
   <meta name="privacy" content="This tool does not store uploaded content. All operations are performed locally.">
   <title>圖片合併工具 - Image Merger Tool | 免費在線圖片拼接與合併工具</title>
+  <!-- JSZip library for ZIP file extraction -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -357,7 +359,11 @@
         selectImages: "選擇圖片",
         dragToTable: "拖放到表格",
         cellNumber: "格子 ",
-        privacyNotice: "注意：這個工具不會存起上傳的內容，所有操作均在本地完成，確保您的隱私安全。"
+        privacyNotice: "注意：這個工具不會存起上傳的內容，所有操作均在本地完成，確保您的隱私安全。",
+        clearAllImages: "清空所有圖片",
+        uploadImagesAppend: "上傳圖片（追加模式）",
+        uploadZip: "上傳 ZIP 檔案（包含圖片）",
+        clearAllImagesTitle: "刪除所有已上傳的圖片"
       },
       "en": {
         title: "Image Merger Tool",
@@ -384,7 +390,11 @@
         selectImages: "Select images",
         dragToTable: "Drag to table",
         cellNumber: "Cell ",
-        privacyNotice: "Note: This tool does not store uploaded content. All operations are performed locally to ensure your privacy."
+        privacyNotice: "Note: This tool does not store uploaded content. All operations are performed locally to ensure your privacy.",
+        clearAllImages: "Clear All Images",
+        uploadImagesAppend: "Upload Images (Append Mode)",
+        uploadZip: "Upload ZIP File (with images)",
+        clearAllImagesTitle: "Delete all uploaded images"
       }
     };
   </script>
@@ -455,6 +465,15 @@
     if (document.getElementById("privacyNotice")) {
       document.getElementById("privacyNotice").textContent = translation.privacyNotice;
     }
+    if (document.getElementById("clearAllImagesButton")) {
+      document.getElementById("clearAllImagesButton").textContent = translation.clearAllImages;
+    }
+    if (document.getElementById("clearAllImagesButton")) {
+      document.getElementById("clearAllImagesButton").setAttribute("title", translation.clearAllImagesTitle);
+    }
+    if (document.getElementById("tableImageInput")) {
+      document.getElementById("tableImageInput").setAttribute("title", translation.selectImages);
+    }
 
   }
 </script>
@@ -517,14 +536,15 @@
       <div class="auto-fill-buttons">
         <button id="autoFillAscButton" onclick="autoFillTable('asc')">自動填充（正序）</button>
         <button id="autoFillDescButton" onclick="autoFillTable('desc')">自動填充（倒序）</button>
-        <button id="clearTableButton" onclick="clearTable()" style="background-color: #dc3545;">清空表格</button>
+        <button id="clearTableButton" onclick="clearAllResultsAndImages()" style="background-color: #dc3545;">清空表格</button>
         <button id="mergeTableButton" onclick="mergeTableImages()" style="background-color: #28a745;">合併表格圖片</button>
       </div>
     </div>
     
     <div style="margin-top: 15px;">
       <label id="uploadImages-label">上傳圖片（拖放到表格）：</label>
-      <input type="file" id="tableImageInput" accept="image/*" multiple style="margin-top: 10px;">
+      <input type="file" id="tableImageInput" accept="image/*,.zip" multiple style="margin-top: 10px;">
+      <button id="clearAllImagesButton" onclick="clearAllUploadedImages()" style="margin-top: 10px; background-color: #dc3545;" title="清空所有圖片">清空所有圖片</button>
       <div id="uploadedImagesContainer"></div>
     </div>
   </div>
@@ -564,8 +584,8 @@
         const originalSettings = document.getElementById('originalModeSettings');
         const tableSettings = document.getElementById('tableModeSettings');
         
-        // Clear results when switching modes
-        clearAllResults();
+        // Clear results and uploaded images when switching modes
+        clearAllResultsAndImages();
         
         if (tableMode === 'table') {
           originalSettings.classList.add('hidden');
@@ -598,6 +618,12 @@
       document.getElementById('tableResultContainer').classList.remove('show');
     }
     
+    // Clear all results AND uploaded images (both modes)
+    function clearAllResultsAndImages() {
+      clearAllResults();
+      clearAllUploadedImages();
+    }
+    
     // Initialize UI based on default mode (table mode)
     (function() {
       const originalSettings = document.getElementById('originalModeSettings');
@@ -606,19 +632,64 @@
       tableSettings.classList.add('show');
     })();
     
-    // Table image input handler
+    // Table image input handler - supports ZIP files and append mode
     document.getElementById('tableImageInput').addEventListener('change', async (event) => {
       const files = Array.from(event.target.files);
       if (files.length === 0) return;
       
-      // Sort files by name
-      uploadedTableFiles = files.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+      // Process each file (including ZIP files)
+      const newFiles = [];
+      const newImages = [];
       
-      // Load images
+      for (const file of files) {
+        if (file.name.toLowerCase().endsWith('.zip')) {
+          // Handle ZIP file
+          try {
+            const zip = new JSZip();
+            const zipContents = await zip.loadAsync(file);
+            
+            // Get all image files from ZIP
+            const imageFiles = [];
+            for (const [zipName, zipEntry] of Object.entries(zipContents.files)) {
+              if (!zipEntry.dir && zipEntry.name.match(/\.(jpg|jpeg|png|gif|bmp|webp)$/i)) {
+                const blob = await zipEntry.async('blob');
+                imageFiles.push({
+                  name: zipEntry.name,
+                  blob: blob,
+                  lastModified: file.lastModified
+                });
+              }
+            }
+            
+            // Sort image files by name
+            imageFiles.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+            
+            // Add to new files
+            for (const imgFile of imageFiles) {
+              const newFile = new File([imgFile.blob], imgFile.name, { type: imgFile.blob.type, lastModified: imgFile.lastModified });
+              newFiles.push(newFile);
+            }
+          } catch (err) {
+            console.error('Error loading ZIP file:', err);
+            alert('無法讀取 ZIP 檔案：' + file.name + '\nFailed to read ZIP file: ' + file.name);
+          }
+        } else if (file.type.startsWith('image/')) {
+          // Handle regular image file
+          newFiles.push(file);
+        }
+      }
+      
+      // Append new files to existing files (don't replace)
+      uploadedTableFiles = [...uploadedTableFiles, ...newFiles].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+      
+      // Load all images (existing + new)
       uploadedTableImages = await Promise.all(uploadedTableFiles.map(file => loadImage(file)));
       
       // Display thumbnails
       displayUploadedImages();
+      
+      // Reset input value to allow re-uploading the same files
+      event.target.value = '';
     });
     
     // Display uploaded images thumbnails
@@ -841,7 +912,15 @@
       renderTableGrid();
     }
     
-    // Clear table
+    // Clear all uploaded images (thumbnails and files)
+    function clearAllUploadedImages() {
+      uploadedTableFiles = [];
+      uploadedTableImages = [];
+      document.getElementById('uploadedImagesContainer').innerHTML = '';
+      document.getElementById('tableImageInput').value = '';
+    }
+    
+    // Clear table (grid cells only)
     function clearTable() {
       for (let i = 0; i < tableRows; i++) {
         for (let j = 0; j < tableCols; j++) {
@@ -1001,15 +1080,63 @@
     canvasDataUrl = canvas.toDataURL('image/png');
     document.getElementById('downloadButton').style.display = 'inline-block';
 
-    // 處理檔案輸入變化以初始化圖片，並按名稱正序合併
+    // 處理檔案輸入變化以初始化圖片，並按名稱正序合併 - 支援 ZIP 和追加模式
     document.getElementById('imageInput').addEventListener('change', async (event) => {
-      imageFiles = Array.from(event.target.files);
+      const files = Array.from(event.target.files);
+      if (files.length === 0) return;
+
+      // Process each file (including ZIP files)
+      const newFiles = [];
+      
+      for (const file of files) {
+        if (file.name.toLowerCase().endsWith('.zip')) {
+          // Handle ZIP file
+          try {
+            const zip = new JSZip();
+            const zipContents = await zip.loadAsync(file);
+            
+            // Get all image files from ZIP
+            const imageFiles = [];
+            for (const [zipName, zipEntry] of Object.entries(zipContents.files)) {
+              if (!zipEntry.dir && zipEntry.name.match(/\.(jpg|jpeg|png|gif|bmp|webp)$/i)) {
+                const blob = await zipEntry.async('blob');
+                imageFiles.push({
+                  name: zipEntry.name,
+                  blob: blob,
+                  lastModified: file.lastModified
+                });
+              }
+            }
+            
+            // Sort image files by name
+            imageFiles.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+            
+            // Add to new files
+            for (const imgFile of imageFiles) {
+              const newFile = new File([imgFile.blob], imgFile.name, { type: imgFile.blob.type, lastModified: imgFile.lastModified });
+              newFiles.push(newFile);
+            }
+          } catch (err) {
+            console.error('Error loading ZIP file:', err);
+            alert('無法讀取 ZIP 檔案：' + file.name + '\nFailed to read ZIP file: ' + file.name);
+          }
+        } else if (file.type.startsWith('image/')) {
+          // Handle regular image file
+          newFiles.push(file);
+        }
+      }
+      
+      // Append new files to existing files (don't replace)
+      imageFiles = [...imageFiles, ...newFiles].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+      
       if (imageFiles.length === 0) return;
 
-      // 按名稱正序排序
-      imageFiles = imageFiles.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+      // Load all images (existing + new)
       images = await Promise.all(imageFiles.map(file => loadImage(file)));
       await mergeImages('asc');
+      
+      // Reset input value to allow re-uploading the same files
+      event.target.value = '';
     });
 
     // 處理間距和每行圖片數量輸入變化，重新繪製畫布
