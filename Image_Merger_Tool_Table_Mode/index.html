@@ -599,29 +599,27 @@
     
     // Clear all results (both modes)
     function clearAllResults() {
-      // Clear original mode canvas
-      const previewCanvas = document.getElementById('preview');
-      const ctx = previewCanvas.getContext('2d');
-      previewCanvas.width = 0;
-      previewCanvas.height = 0;
-      ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-      document.getElementById('downloadButton').style.display = 'none';
-      document.getElementById('originalResultContainer').classList.remove('show');
+        // Clear only the merged table images
+        const tableCells = document.querySelectorAll('.merged-table-cell');
+        tableCells.forEach(cell => {
+            cell.innerHTML = ''; // Remove any content inside the table cells
+        });
       
-      // Clear table mode canvas
-      const tableCanvas = document.getElementById('tablePreview');
-      const tableCtx = tableCanvas.getContext('2d');
-      tableCanvas.width = 0;
-      tableCanvas.height = 0;
-      tableCtx.clearRect(0, 0, tableCanvas.width, tableCanvas.height);
-      document.getElementById('tableDownloadButton').style.display = 'none';
-      document.getElementById('tableResultContainer').classList.remove('show');
+        // Optionally, reset any related state variables for the merged table
+        if (typeof tableGrid !== 'undefined') {
+            tableGrid.forEach(row => row.fill(null)); // Clear the table grid data
+        }
+      
+        // Re-render the table grid if necessary
+        if (typeof renderTableGrid === 'function') {
+            renderTableGrid();
+        }
     }
     
     // Clear all results AND uploaded images (both modes)
     function clearAllResultsAndImages() {
       clearAllResults();
-      clearAllUploadedImages();
+      //clearAllUploadedImages();
     }
     
     // Initialize UI based on default mode (table mode)
