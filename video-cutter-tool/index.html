@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Cutter Tool</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Video Cutter Tool</h1>
+        <input type="file" id="videoUpload" accept="video/*">
+        <video id="videoPlayer" controls></video>
+        
+        <div class="range-selection">
+            <div class="progress-bar">
+                <div class="range-bar">
+                    <div class="range-handle range-handle-start"></div>
+                    <div class="range-handle range-handle-end"></div>
+                </div>
+            </div>
+            <div class="time-labels">
+                <span id="startTimeLabel">Start: 0s</span>
+                <span id="endTimeLabel">End: 0s</span>
+            </div>
+        </div>
+        
+        <button id="previewButton">Preview Selected Range</button>
+        <button id="cutButton">Cut Video</button>
+        <button id="downloadButton" style="display: none;">Download Video</button>
+        <button id="resetButton">Reset Selection</button>
+        <div id="output"></div>
+    </div>
+    <script src="js/script.js"></script>
+</body>
+</html>
