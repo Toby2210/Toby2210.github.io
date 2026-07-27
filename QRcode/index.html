@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code Message Sender</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>📱 QR Code Message Sender</h1>
+        
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="sender">Sender</button>
+            <button class="tab-btn" data-tab="receiver">Receiver</button>
+        </div>
+
+        <!-- Sender Tab -->
+        <div class="tab-content active" id="sender-tab">
+            <div class="input-section">
+                <h2>Send Message</h2>
+                
+                <div id="text-input-container">
+                    <textarea id="message-input" placeholder="Enter your message here..."></textarea>
+                </div>
+
+                <button id="generate-qr" class="primary-btn">Generate QR Code</button>
+            </div>
+
+            <div class="qr-section" id="qr-section" style="display: none;">
+                <h2>Scan QR Code to Receive</h2>
+                <div class="qr-container">
+                    <div id="qr-code"></div>
+                </div>
+                <p class="qr-instruction">Device B: Scan this QR code to receive the message</p>
+                <button id="download-qr-btn" class="secondary-btn">Download QR Code</button>
+                <button id="new-message" class="secondary-btn">New Message</button>
+            </div>
+        </div>
+
+        <!-- Receiver Tab -->
+        <div class="tab-content" id="receiver-tab">
+            <div class="receiver-section">
+                <h2>Receive via QR Code</h2>
+                
+                <div class="scan-methods">
+                    <div class="method-selector">
+                        <button class="method-btn active" data-method="camera">Camera</button>
+                        <button class="method-btn" data-method="upload">Upload Image</button>
+                    </div>
+
+                    <!-- Unified Scanner Container -->
+                    <div id="unified-scanner" class="scanner-container">
+                        <!-- Camera Scanner -->
+                        <div id="camera-scanner">
+                            <!-- Scanner Placeholder (outside scanner-container to prevent html5-qrcode from replacing it) -->
+                            <div id="scanner-placeholder" class="scanner-placeholder">
+                                <p>📷 Camera will be used to scan QR codes</p>
+                                <button id="start-scanner" class="primary-btn">Start Scanner</button>
+                            </div>
+                            <div id="scanner-container">
+                                <video id="video" autoplay playsinline></video>
+                                <canvas id="canvas" style="display: none;"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Upload Scanner -->
+                        <div id="upload-scanner" style="display: none;">
+                            <div class="upload-area">
+                                <p>📁 Upload an image containing a QR code</p>
+                                <input type="file" id="upload-file" accept="image/*">
+                                <div id="upload-preview" class="upload-preview"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Open Camera Button - only visible on camera page -->
+                    <button id="open-camera-btn" class="secondary-btn" style="display: none; margin: 10px auto;">Open Camera</button>
+                </div>
+
+                <div id="scan-result" class="scan-result">
+                    <h3>Result</h3>
+                    <div id="result-content"></div>
+                    <button id="copy-result" class="secondary-btn">Copy Content</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- QR Code libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="js/script.js"></script>
+</body>
+</html>

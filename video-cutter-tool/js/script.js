@@ -99,8 +99,24 @@ startHandle.addEventListener("mousedown", (e) => {
     isDragging = true;
     currentDragHandle = startHandle;
     
-    // Immediately update position to match mouse click
-    updateDragPosition(e.clientX);
+    // Use requestAnimationFrame to ensure getBoundingClientRect is accurate
+    requestAnimationFrame(() => {
+        const rect = progressBar.getBoundingClientRect();
+        const offsetX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        const percent = offsetX / rect.width;
+        const time = percent * videoDuration;
+        startTime = Math.min(time, endTime - 0.1);
+        
+        // Update all positions
+        const startPercent = (startTime / videoDuration) * 100;
+        const endPercent = (endTime / videoDuration) * 100;
+        startHandle.style.left = `${startPercent}%`;
+        endHandle.style.left = `${endPercent}%`;
+        rangeBar.style.left = `${startPercent}%`;
+        rangeBar.style.width = `${endPercent - startPercent}%`;
+        startTimeLabel.textContent = `Start: ${startTime.toFixed(2)}s`;
+        endTimeLabel.textContent = `End: ${endTime.toFixed(2)}s`;
+    });
     
     document.addEventListener("mousemove", onDocumentMouseMove);
     document.addEventListener("mouseup", stopDrag);
@@ -112,8 +128,24 @@ endHandle.addEventListener("mousedown", (e) => {
     isDragging = true;
     currentDragHandle = endHandle;
     
-    // Immediately update position to match mouse click
-    updateDragPosition(e.clientX);
+    // Use requestAnimationFrame to ensure getBoundingClientRect is accurate
+    requestAnimationFrame(() => {
+        const rect = progressBar.getBoundingClientRect();
+        const offsetX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        const percent = offsetX / rect.width;
+        const time = percent * videoDuration;
+        endTime = Math.max(time, startTime + 0.1);
+        
+        // Update all positions
+        const startPercent = (startTime / videoDuration) * 100;
+        const endPercent = (endTime / videoDuration) * 100;
+        startHandle.style.left = `${startPercent}%`;
+        endHandle.style.left = `${endPercent}%`;
+        rangeBar.style.left = `${startPercent}%`;
+        rangeBar.style.width = `${endPercent - startPercent}%`;
+        startTimeLabel.textContent = `Start: ${startTime.toFixed(2)}s`;
+        endTimeLabel.textContent = `End: ${endTime.toFixed(2)}s`;
+    });
     
     document.addEventListener("mousemove", onDocumentMouseMove);
     document.addEventListener("mouseup", stopDrag);
