@@ -190,9 +190,35 @@
       width: 100px;
       padding: 8px 12px;
     }
-    .table-config button {
+    .table-config button, .table-config .mode-switch {
       padding: 10px 25px;
       white-space: nowrap;
+      cursor: pointer;
+      border: 2px solid #007bff;
+      border-radius: 5px;
+      background: white;
+      color: #007bff;
+      font-weight: bold;
+      transition: all 0.3s;
+    }
+    .table-config button:hover, .table-config .mode-switch:hover {
+      background: #007bff;
+      color: white;
+    }
+    .table-config .mode-switch.active {
+      background: #007bff;
+      color: white;
+      border-color: #0056b3;
+    }
+    .table-config .mode-switch.move-mode {
+      border-color: #007bff;
+    }
+    .table-config .mode-switch.resize-mode {
+      border-color: #28a745;
+    }
+    .table-config .mode-switch.resize-mode.active {
+      background: #28a745;
+      border-color: #1e7e34;
     }
     #tableResultContainer {
       display: none;
@@ -263,6 +289,7 @@
       transition: background 0.2s;
       position: relative;
       overflow: hidden;
+      border: 1px solid #e0e0e0;
     }
     .table-cell:hover {
       background: #e7f1ff;
@@ -274,10 +301,42 @@
     .table-cell.has-image {
       background: #f0f0f0;
     }
-    .table-cell img {
+    .table-cell img.cell-image {
       max-width: 100%;
       max-height: 100%;
       object-fit: contain;
+      cursor: move;
+      position: relative;
+      z-index: 1;
+      pointer-events: auto;
+    }
+    
+    /* Click on image to resize in resize mode */
+    .table-cell img.cell-image {
+      cursor: pointer;
+    }
+    .table-cell img.cell-image:hover {
+      outline: 2px solid #007bff;
+      outline-offset: 2px;
+    }
+    /* Size display */
+    .size-display {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.7);
+      color: white;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 3px;
+      pointer-events: none;
+      z-index: 10;
+      display: none;
+      white-space: nowrap;
+    }
+    .table-cell:hover .size-display {
+      display: block;
     }
     .table-cell .cell-number {
       position: absolute;
@@ -288,6 +347,8 @@
       font-size: 12px;
       padding: 2px 6px;
       border-radius: 3px;
+      z-index: 20; /* Ensure it's on top of image */
+      pointer-events: none;
     }
     .table-cell .remove-btn {
       position: absolute;
@@ -304,9 +365,15 @@
       display: none;
       align-items: center;
       justify-content: center;
+      z-index: 10;
+      font-weight: bold;
     }
     .table-cell:hover .remove-btn {
       display: flex;
+    }
+    .table-cell .remove-btn:hover {
+      background: rgba(200,0,0,0.9);
+      transform: scale(1.1);
     }
     .auto-fill-buttons {
       display: flex;
@@ -894,6 +961,8 @@
       <label for="tableColSpacing" id="tableColSpacing-label">列間距（像素）：</label>
       <input type="number" id="tableColSpacing" min="0" value="0" title="輸入列之間的間距">
       <button id="createTableButton" onclick="createTableGrid()">建立表格</button>
+      <button id="modeSwitchMove" class="mode-switch move-mode active" onclick="switchTableMode('move')">移動模式</button>
+      <button id="modeSwitchResize" class="mode-switch resize-mode" onclick="switchTableMode('resize')">調整大小模式</button>
     </div>
     
     <div id="tableGridContainer" style="display: none;">
@@ -1029,6 +1098,7 @@
     
     // Table mode variables
     let tableMode = 'table'; // 'imagesPerRow' or 'table'
+    let tableOperationMode = 'move'; // 'move' or 'resize' - controls how to interact with images in cells
     let tableRows = 2;
     let tableCols = 2;
     let tableGrid = []; // 2D array to store cell images
@@ -1037,6 +1107,12 @@
     let draggedUploadIndex = -1; // Index of image being dragged from upload area
     let draggedCellIndex = -1; // For dragging between table cells
     let cellSizes = []; // Track cell sizes for dynamic sizing
+    let currentResizingCell = null; // Track which cell is currently being resized
+    let resizeStartX = 0;
+    let resizeStartY = 0;
+    let resizeStartWidth = 0;
+    let resizeStartHeight = 0;
+    let isResizing = false;
     
     // Mode toggle event listener
     document.querySelectorAll('input[name="mode"]').forEach(radio => {
@@ -1465,9 +1541,15 @@
             
             if (draggedUploadIndex !== -1) {
               // Dropping from uploaded images
+              const uploadedImg = uploadedTableImages[draggedUploadIndex];
+              // Use original image dimensions or default to 150x150
+              const width = uploadedImg.naturalWidth || uploadedImg.width || 150;
+              const height = uploadedImg.naturalHeight || uploadedImg.height || 150;
               tableGrid[i][j] = {
-                img: uploadedTableImages[draggedUploadIndex],
-                file: uploadedTableFiles[draggedUploadIndex]
+                img: uploadedImg,
+                file: uploadedTableFiles[draggedUploadIndex],
+                width: width,
+                height: height
               };
               renderTableGrid();
             } else if (draggedCellIndex !== -1) {
@@ -1487,14 +1569,6 @@
             }
           });
           
-          // Click to remove
-          cell.addEventListener('click', () => {
-            if (tableGrid[i][j]) {
-              tableGrid[i][j] = null;
-              renderTableGrid();
-            }
-          });
-          
           gridContainer.appendChild(cell);
         }
       }
@@ -1503,6 +1577,33 @@
       cellSizes = Array(tableRows).fill(null).map(() => Array(tableCols).fill({ width: 150, height: 150 }));
       
       document.getElementById('tableGridContainer').style.display = 'flex';
+    }
+    
+    // Switch between move and resize modes
+    function switchTableMode(mode) {
+      tableOperationMode = mode;
+      
+      // Update button states
+      const moveBtn = document.getElementById('modeSwitchMove');
+      const resizeBtn = document.getElementById('modeSwitchResize');
+      
+      // Update cell styles
+      const cells = document.querySelectorAll('.table-cell');
+      cells.forEach(cell => {
+        if (mode === 'resize') {
+          cell.classList.add('resize-mode');
+        } else {
+          cell.classList.remove('resize-mode');
+        }
+      });
+      
+      if (mode === 'move') {
+        moveBtn.classList.add('active');
+        resizeBtn.classList.remove('active');
+      } else {
+        resizeBtn.classList.add('active');
+        moveBtn.classList.remove('active');
+      }
     }
     
     // Render table grid
@@ -1518,24 +1619,78 @@
         const cellNum = cell.querySelector('.cell-number');
         const removeBtn = cell.querySelector('.remove-btn');
         
-        // Remove existing images
+        // Remove existing images and size display
         const existingImg = cell.querySelector('.cell-image');
-        if (existingImg) {
-          existingImg.remove();
-        }
+        const existingSizeDisplay = cell.querySelector('.size-display');
+        if (existingImg) existingImg.remove();
+        if (existingSizeDisplay) existingSizeDisplay.remove();
         
         // Add image if exists
         if (tableGrid[row][col]) {
           cell.classList.add('has-image');
+          const imgData = tableGrid[row][col];
           const img = document.createElement('img');
-          img.src = tableGrid[row][col].img.src;
+          img.src = imgData.img.src;
           img.className = 'cell-image';
           img.draggable = true;
+          img.style.width = imgData.width + 'px';
+          img.style.height = imgData.height + 'px';
+          
+          // Add size display
+          const sizeDisplay = document.createElement('div');
+          sizeDisplay.className = 'size-display';
+          sizeDisplay.textContent = imgData.width + ' x ' + imgData.height;
+          
+          // Click to resize - show percentage input
+          img.addEventListener('click', (e) => {
+            if (tableOperationMode !== 'resize') {
+              return;
+            }
+            e.stopPropagation();
+            
+            // Get original dimensions
+            const originalWidth = img.naturalWidth || imgData.width;
+            const originalHeight = img.naturalHeight || imgData.height;
+            
+            // Show percentage input
+            const newPercent = prompt('輸入縮放百分比 (e.g., 50 = 50%, 125 = 125%):', 
+              Math.round((imgData.width / originalWidth) * 100));
+            
+            if (newPercent !== null && newPercent !== '') {
+              const percent = parseFloat(newPercent);
+              if (!isNaN(percent) && percent > 0) {
+                // Calculate new dimensions
+                const newWidth = Math.max(50, Math.round(originalWidth * percent / 100));
+                const newHeight = Math.max(50, Math.round(originalHeight * percent / 100));
+                
+                // Update image display
+                img.style.width = newWidth + 'px';
+                img.style.height = newHeight + 'px';
+                
+                // Update size display
+                sizeDisplay.textContent = newWidth + ' x ' + newHeight;
+                
+                // Store in tableGrid
+                imgData.width = newWidth;
+                imgData.height = newHeight;
+              } else {
+                alert('請輸入有效的數字！');
+              }
+            }
+          });
           
           // Add drag events for moving between cells
           img.addEventListener('dragstart', (e) => {
+            if (tableOperationMode !== 'move') {
+              e.preventDefault();
+              return;
+            }
+            if (isResizing) {
+              e.preventDefault();
+              return;
+            }
             draggedCellIndex = { row: row, col: col };
-            draggedUploadIndex = -1; // Clear uploaded index
+            draggedUploadIndex = -1;
             e.dataTransfer.setData('text/plain', JSON.stringify({row, col}));
             e.dataTransfer.effectAllowed = 'move';
             cell.classList.add('dragging');
@@ -1546,6 +1701,21 @@
             cell.classList.remove('dragging');
           });
           
+          // Prevent cell click from removing image
+          img.addEventListener('click', (e) => {
+            e.stopPropagation();
+          });
+          
+          // Prevent cell click from removing image
+          cell.addEventListener('click', (e) => {
+            // Only remove if clicked directly on cell background (not on image or controls)
+            if (e.target === cell) {
+              tableGrid[row][col] = null;
+              renderTableGrid();
+            }
+          });
+          
+          cell.appendChild(sizeDisplay);
           cell.appendChild(img);
         } else {
           cell.classList.remove('has-image');
@@ -1580,9 +1750,14 @@
       let imgIndex = 0;
       for (let i = 0; i < tableRows && imgIndex < sortedImages.length; i++) {
         for (let j = 0; j < tableCols && imgIndex < sortedImages.length; j++) {
+          const uploadedImg = sortedImages[imgIndex];
+          const width = uploadedImg.naturalWidth || uploadedImg.width || 150;
+          const height = uploadedImg.naturalHeight || uploadedImg.height || 150;
           tableGrid[i][j] = {
             img: sortedImages[imgIndex],
-            file: sortedFiles[imgIndex]
+            file: sortedFiles[imgIndex],
+            width: width,
+            height: height
           };
           imgIndex++;
         }
@@ -1624,15 +1799,21 @@
       for (let i = 0; i < tableRows; i++) {
         for (let j = 0; j < tableCols; j++) {
           if (tableGrid[i][j]) {
-            const img = tableGrid[i][j].img;
+            const cellData = tableGrid[i][j];
+            const img = cellData.img;
+            // Use custom width/height if available, otherwise use original dimensions
+            const width = cellData.width || img.width;
+            const height = cellData.height || img.height;
             cellsWithImages.push({
               row: i,
               col: j,
-              img: img
+              img: img,
+              customWidth: width,
+              customHeight: height
             });
             // Track max dimensions for each row and column
-            rowHeights[i] = Math.max(rowHeights[i], img.height);
-            colWidths[j] = Math.max(colWidths[j], img.width);
+            rowHeights[i] = Math.max(rowHeights[i], height);
+            colWidths[j] = Math.max(colWidths[j], width);
           }
         }
       }
@@ -1689,13 +1870,17 @@
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(x, y, cellWidth, cellHeight);
         
-        // Draw image scaled to fit (maintaining aspect ratio)
+        // Draw image at custom size (maintaining aspect ratio within custom dimensions)
         const img = cell.img;
-        const scale = Math.min(cellWidth / img.width, cellHeight / img.height);
+        const customWidth = cell.customWidth || img.width;
+        const customHeight = cell.customHeight || img.height;
+        
+        // Scale the image to fit within the custom dimensions while maintaining aspect ratio
+        const scale = Math.min(customWidth / img.width, customHeight / img.height);
         const drawWidth = img.width * scale;
         const drawHeight = img.height * scale;
-        const drawX = x + (cellWidth - drawWidth) / 2;
-        const drawY = y + (cellHeight - drawHeight) / 2;
+        const drawX = x + (customWidth - drawWidth) / 2;
+        const drawY = y + (customHeight - drawHeight) / 2;
         
         ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
       });
