@@ -329,6 +329,78 @@
     #originalResultContainer.show {
       display: flex;
     }
+    /* Tutorial section styles */
+    #tutorialSection {
+      margin-top: 30px;
+      padding: 25px;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      max-width: 1000px;
+      width: 100%;
+    }
+    #tutorialSection h2 {
+      margin-top: 0;
+      color: #333;
+      border-bottom: 2px solid #007bff;
+      padding-bottom: 10px;
+    }
+    .tutorial-step {
+      margin-bottom: 20px;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      border-left: 4px solid #007bff;
+    }
+    .tutorial-step h3 {
+      margin: 0 0 10px 0;
+      color: #007bff;
+      font-size: 16px;
+    }
+    .tutorial-step p {
+      margin: 5px 0;
+      color: #555;
+      line-height: 1.6;
+    }
+    .tutorial-step ul {
+      margin: 10px 0;
+      padding-left: 20px;
+    }
+    .tutorial-step li {
+      margin: 5px 0;
+      color: #555;
+    }
+    .tutorial-tip {
+      background: #fff3cd;
+      border-left-color: #ffc107;
+      padding: 12px 15px;
+      border-radius: 6px;
+      margin-top: 10px;
+    }
+    .tutorial-tip strong {
+      color: #856404;
+    }
+    .tutorial-note {
+      background: #d1ecf1;
+      border-left-color: #17a2b8;
+      padding: 12px 15px;
+      border-radius: 6px;
+      margin-top: 10px;
+    }
+    .tutorial-note strong {
+      color: #0c5460;
+    }
+    .method-box {
+      background: #e7f3ff;
+      border: 1px solid #b8daff;
+      border-radius: 6px;
+      padding: 15px;
+      margin: 10px 0;
+    }
+    .method-box h4 {
+      margin: 0 0 10px 0;
+      color: #004085;
+    }
   </style>
 </head>
 <body>
@@ -336,7 +408,7 @@
     const translations = {
       "zh-HK": {
         title: "圖片合併工具",
-        selectLanguage: "選擇語言",
+        selectLanguage: "更改語言",
         imagesPerRow: "每行圖片數量：",
         rowSpacing: "行間距（像素）：",
         colSpacing: "列間距（像素）：",
@@ -363,11 +435,51 @@
         clearAllImages: "清空所有圖片",
         uploadImagesAppend: "上傳圖片（追加模式）",
         uploadZip: "上傳 ZIP 檔案（包含圖片）",
-        clearAllImagesTitle: "刪除所有已上傳的圖片"
+        clearAllImagesTitle: "刪除所有已上傳的圖片",
+        tutorialTitle: "📖 使用教學 | How to Use",
+        step1Title: "步驟 1：設定表格",
+        step1Desc: "首先設定您要使用的表格配置：",
+        step1Item1: "<strong>表格行數 (Table rows)</strong>：設定表格的垂直行數",
+        step1Item2: "<strong>表格列數 (Table columns)</strong>：設定表格的水平列數",
+        step1Item3: "<strong>行間距 (Row spacing)</strong>：設定行與行之間的間距（像素）",
+        step1Item4: "<strong>列間距 (Column spacing)</strong>：設定列與列之間的間距（像素）",
+        step1Action: "設定完成後，點擊 <strong>\"建立表格\" (Create Table)</strong> 按鈕生成表格。",
+        step2Title: "步驟 2：上傳圖片",
+        step2Desc: "您可以使用以下兩種方式上傳圖片：",
+        method1Title: "方法 A：上傳單張或多張圖片",
+        method1Item1: "點擊 <strong>\"Choose File\"</strong> 按鈕",
+        method1Item2: "選擇一張或多張圖片文件（支援 JPG, PNG, GIF, BMP, WebP）",
+        method1Item3: "選擇的圖片會顯示在下方預覽區",
+        method2Title: "方法 B：上傳 ZIP 檔案（快速上傳）",
+        method2Item1: "準備一個包含圖片的 ZIP 檔案",
+        method2Item2: "點擊 <strong>\"Choose File\"</strong> 按鈕",
+        method2Item3: "選擇您的 ZIP 檔案",
+        method2Item4: "工具會自動解壓並提取所有圖片",
+        method2Item5: "圖片會按文件名稱自動排序",
+        step3Title: "步驟 3：將圖片放入表格",
+        step3Desc: "有幾種方法可以將圖片放置到表格中：",
+        step3Item1: "<strong>拖放 (Drag & Drop)</strong>：從預覽區拖拽圖片到表格的格子中",
+        step3Item2: "<strong>自動填充（正序）</strong>：點擊 <strong>\"Auto-fill (ascending)\"</strong> 按順序填充格子（1, 2, 3...）",
+        step3Item3: "<strong>自動填充（倒序）</strong>：點擊 <strong>\"Auto-fill (descending)\"</strong> 反向填充格子",
+        step4Title: "步驟 4：合併圖片",
+        step4Desc: "當所有圖片都放置到表格後：",
+        step4Item1: "點擊 <strong>\"Merge Table Images\"</strong> 按鈕",
+        step4Item2: "合併後的圖片會在上方顯示為畫布",
+        step4Item3: "您可以調整表格配置並重新合併",
+        step5Title: "步驟 5：下載結果",
+        step5Desc: "合併完成後：",
+        step5Item1: "點擊 <strong>\"下載合併圖片\" (Download Merged Image)</strong> 按鈕",
+        step5Item2: "選擇保存位置並完成下載",
+        tip1: "所有操作都在您的瀏覽器本地完成，您的圖片不會上傳到任何服務器",
+        tip2: "點擊 <strong>\"清空表格\" (Clear table)</strong> 可以清除所有內容並重新開始",
+        tip3: "您可以隨時調整行數、列數和間距來獲得不同的合併效果",
+        tipHeader: "💡 提示 (Tips)：",
+        privacyNote: "此工具完全在本地運行，所有圖片處理都在您的設備上完成。我們不會存儲或上傳您的任何圖片。",
+        privacyHeader: "🔒 隱私保護 (Privacy)："
       },
       "en": {
         title: "Image Merger Tool",
-        selectLanguage: "Select Language",
+        selectLanguage: "Change Language",
         imagesPerRow: "Images per row:",
         rowSpacing: "Row spacing (pixels):",
         colSpacing: "Column spacing (pixels):",
@@ -394,7 +506,47 @@
         clearAllImages: "Clear All Images",
         uploadImagesAppend: "Upload Images (Append Mode)",
         uploadZip: "Upload ZIP File (with images)",
-        clearAllImagesTitle: "Delete all uploaded images"
+        clearAllImagesTitle: "Delete all uploaded images",
+        tutorialTitle: "📖 How to Use | 使用教學",
+        step1Title: "Step 1: Configure Table",
+        step1Desc: "First, set up your table configuration:",
+        step1Item1: "<strong>Table rows</strong>: Set the number of vertical rows",
+        step1Item2: "<strong>Table columns</strong>: Set the number of horizontal columns",
+        step1Item3: "<strong>Row spacing</strong>: Set spacing between rows (pixels)",
+        step1Item4: "<strong>Column spacing</strong>: Set spacing between columns (pixels)",
+        step1Action: "After setting, click <strong>\"Create Table\"</strong> button to generate the table.",
+        step2Title: "Step 2: Upload Images",
+        step2Desc: "You can upload images using two methods:",
+        method1Title: "Method A: Upload Single or Multiple Images",
+        method1Item1: "Click the <strong>\"Choose File\"</strong> button",
+        method1Item2: "Select one or multiple image files (JPG, PNG, GIF, BMP, WebP supported)",
+        method1Item3: "Selected images will appear in the preview area below",
+        method2Title: "Method B: Upload ZIP File (Quick Upload)",
+        method2Item1: "Prepare a ZIP file containing your images",
+        method2Item2: "Click the <strong>\"Choose File\"</strong> button",
+        method2Item3: "Select your ZIP file",
+        method2Item4: "The tool will automatically extract all images",
+        method2Item5: "Images will be automatically sorted by filename",
+        step3Title: "Step 3: Place Images in Table",
+        step3Desc: "There are several ways to place images into the table:",
+        step3Item1: "<strong>Drag & Drop</strong>: Drag images from preview area to table cells",
+        step3Item2: "<strong>Auto-fill (ascending)</strong>: Click <strong>\"Auto-fill (ascending)\"</strong> to fill cells in order (1, 2, 3...)",
+        step3Item3: "<strong>Auto-fill (descending)</strong>: Click <strong>\"Auto-fill (descending)\"</strong> to fill cells in reverse order",
+        step4Title: "Step 4: Merge Images",
+        step4Desc: "After all images are placed in the table:",
+        step4Item1: "Click the <strong>\"Merge Table Images\"</strong> button",
+        step4Item2: "The merged image will appear as a canvas above",
+        step4Item3: "You can adjust table settings and merge again",
+        step5Title: "Step 5: Download Result",
+        step5Desc: "After merging is complete:",
+        step5Item1: "Click the <strong>\"Download Merged Image\"</strong> button",
+        step5Item2: "Choose save location and complete the download",
+        tip1: "All operations are performed locally in your browser - your images are never uploaded to any server",
+        tip2: "Click <strong>\"Clear table\"</strong> to clear everything and start over",
+        tip3: "You can adjust rows, columns, and spacing at any time to get different merge effects",
+        tipHeader: "💡 Tips:",
+        privacyNote: "This tool runs completely locally - all image processing happens on your device. We do not store or upload any of your images.",
+        privacyHeader: "🔒 Privacy:"
       }
     };
   </script>
@@ -475,11 +627,133 @@
       document.getElementById("tableImageInput").setAttribute("title", translation.selectImages);
     }
 
+    // Tutorial section translations
+    if (document.getElementById("tutorialTitle")) {
+      document.getElementById("tutorialTitle").textContent = translation.tutorialTitle;
+    }
+    if (document.getElementById("step1Title")) {
+      document.getElementById("step1Title").innerHTML = translation.step1Title;
+    }
+    if (document.getElementById("step1Desc")) {
+      document.getElementById("step1Desc").textContent = translation.step1Desc;
+    }
+    if (document.getElementById("step1Item1")) {
+      document.getElementById("step1Item1").innerHTML = translation.step1Item1;
+    }
+    if (document.getElementById("step1Item2")) {
+      document.getElementById("step1Item2").innerHTML = translation.step1Item2;
+    }
+    if (document.getElementById("step1Item3")) {
+      document.getElementById("step1Item3").innerHTML = translation.step1Item3;
+    }
+    if (document.getElementById("step1Item4")) {
+      document.getElementById("step1Item4").innerHTML = translation.step1Item4;
+    }
+    if (document.getElementById("step1Action")) {
+      document.getElementById("step1Action").innerHTML = translation.step1Action;
+    }
+    if (document.getElementById("step2Title")) {
+      document.getElementById("step2Title").innerHTML = translation.step2Title;
+    }
+    if (document.getElementById("step2Desc")) {
+      document.getElementById("step2Desc").textContent = translation.step2Desc;
+    }
+    if (document.getElementById("method1Title")) {
+      document.getElementById("method1Title").innerHTML = translation.method1Title;
+    }
+    if (document.getElementById("method1Item1")) {
+      document.getElementById("method1Item1").innerHTML = translation.method1Item1;
+    }
+    if (document.getElementById("method1Item2")) {
+      document.getElementById("method1Item2").innerHTML = translation.method1Item2;
+    }
+    if (document.getElementById("method1Item3")) {
+      document.getElementById("method1Item3").innerHTML = translation.method1Item3;
+    }
+    if (document.getElementById("method2Title")) {
+      document.getElementById("method2Title").innerHTML = translation.method2Title;
+    }
+    if (document.getElementById("method2Item1")) {
+      document.getElementById("method2Item1").innerHTML = translation.method2Item1;
+    }
+    if (document.getElementById("method2Item2")) {
+      document.getElementById("method2Item2").innerHTML = translation.method2Item2;
+    }
+    if (document.getElementById("method2Item3")) {
+      document.getElementById("method2Item3").innerHTML = translation.method2Item3;
+    }
+    if (document.getElementById("method2Item4")) {
+      document.getElementById("method2Item4").innerHTML = translation.method2Item4;
+    }
+    if (document.getElementById("method2Item5")) {
+      document.getElementById("method2Item5").innerHTML = translation.method2Item5;
+    }
+    if (document.getElementById("step3Title")) {
+      document.getElementById("step3Title").innerHTML = translation.step3Title;
+    }
+    if (document.getElementById("step3Desc")) {
+      document.getElementById("step3Desc").textContent = translation.step3Desc;
+    }
+    if (document.getElementById("step3Item1")) {
+      document.getElementById("step3Item1").innerHTML = translation.step3Item1;
+    }
+    if (document.getElementById("step3Item2")) {
+      document.getElementById("step3Item2").innerHTML = translation.step3Item2;
+    }
+    if (document.getElementById("step3Item3")) {
+      document.getElementById("step3Item3").innerHTML = translation.step3Item3;
+    }
+    if (document.getElementById("step4Title")) {
+      document.getElementById("step4Title").innerHTML = translation.step4Title;
+    }
+    if (document.getElementById("step4Desc")) {
+      document.getElementById("step4Desc").textContent = translation.step4Desc;
+    }
+    if (document.getElementById("step4Item1")) {
+      document.getElementById("step4Item1").innerHTML = translation.step4Item1;
+    }
+    if (document.getElementById("step4Item2")) {
+      document.getElementById("step4Item2").innerHTML = translation.step4Item2;
+    }
+    if (document.getElementById("step4Item3")) {
+      document.getElementById("step4Item3").innerHTML = translation.step4Item3;
+    }
+    if (document.getElementById("step5Title")) {
+      document.getElementById("step5Title").innerHTML = translation.step5Title;
+    }
+    if (document.getElementById("step5Desc")) {
+      document.getElementById("step5Desc").textContent = translation.step5Desc;
+    }
+    if (document.getElementById("step5Item1")) {
+      document.getElementById("step5Item1").innerHTML = translation.step5Item1;
+    }
+    if (document.getElementById("step5Item2")) {
+      document.getElementById("step5Item2").innerHTML = translation.step5Item2;
+    }
+    if (document.getElementById("tip1")) {
+      document.getElementById("tip1").innerHTML = translation.tip1;
+    }
+    if (document.getElementById("tip2")) {
+      document.getElementById("tip2").innerHTML = translation.tip2;
+    }
+    if (document.getElementById("tip3")) {
+      document.getElementById("tip3").innerHTML = translation.tip3;
+    }
+    if (document.getElementById("tipHeader")) {
+      document.getElementById("tipHeader").innerHTML = translation.tipHeader;
+    }
+    if (document.getElementById("privacyNote")) {
+      document.getElementById("privacyNote").textContent = translation.privacyNote;
+    }
+    if (document.getElementById("privacyHeader")) {
+      document.getElementById("privacyHeader").innerHTML = translation.privacyHeader;
+    }
+
   }
 </script>
   <div>
     <div>
-      <label id="language-label">選擇語言</label>
+      <label id="language-label">更改語言</label>
       <button id="language-toggle" onclick="toggleLanguage()">中文</button>
     </div>
   </div>
@@ -557,6 +831,91 @@
     注意：這個工具不會存起上傳的內容，所有操作均在本地完成，確保您的隱私安全。<br>
     Note: This tool does not store uploaded content. All operations are performed locally to ensure your privacy.
   </p>
+
+  <!-- Tutorial Section -->
+  <div id="tutorialSection">
+    <h2 id="tutorialTitle">📖 使用教學 | How to Use</h2>
+    
+    <div class="tutorial-step">
+      <h3 id="step1Title">步驟 1：設定表格</h3>
+      <p id="step1Desc">首先設定您要使用的表格配置：</p>
+      <ul>
+        <li id="step1Item1"><strong>表格行數 (Table rows)</strong>：設定表格的垂直行數</li>
+        <li id="step1Item2"><strong>表格列數 (Table columns)</strong>：設定表格的水平列數</li>
+        <li id="step1Item3"><strong>行間距 (Row spacing)</strong>：設定行與行之間的間距（像素）</li>
+        <li id="step1Item4"><strong>列間距 (Column spacing)</strong>：設定列與列之間的間距（像素）</li>
+      </ul>
+      <p id="step1Action">設定完成後，點擊 <strong>"建立表格" (Create Table)</strong> 按鈕生成表格。</p>
+    </div>
+
+    <div class="tutorial-step">
+      <h3 id="step2Title">步驟 2：上傳圖片</h3>
+      <p id="step2Desc">您可以使用以下兩種方式上傳圖片：</p>
+      
+      <div class="method-box">
+        <h4 id="method1Title">方法 A：上傳單張或多張圖片</h4>
+        <ul>
+          <li id="method1Item1">點擊 <strong>"Choose File"</strong> 按鈕</li>
+          <li id="method1Item2">選擇一張或多張圖片文件（支援 JPG, PNG, GIF, BMP, WebP）</li>
+          <li id="method1Item3">選擇的圖片會顯示在下方預覽區</li>
+        </ul>
+      </div>
+
+      <div class="method-box">
+        <h4 id="method2Title">方法 B：上傳 ZIP 檔案（快速上傳）</h4>
+        <ul>
+          <li id="method2Item1">準備一個包含圖片的 ZIP 檔案</li>
+          <li id="method2Item2">點擊 <strong>"Choose File"</strong> 按鈕</li>
+          <li id="method2Item3">選擇您的 ZIP 檔案</li>
+          <li id="method2Item4">工具會自動解壓並提取所有圖片</li>
+          <li id="method2Item5">圖片會按文件名稱自動排序</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="tutorial-step">
+      <h3 id="step3Title">步驟 3：將圖片放入表格</h3>
+      <p id="step3Desc">有幾種方法可以將圖片放置到表格中：</p>
+      <ul>
+        <li id="step3Item1"><strong>拖放 (Drag & Drop)</strong>：從預覽區拖拽圖片到表格的格子中</li>
+        <li id="step3Item2"><strong>自動填充（正序）</strong>：點擊 <strong>"Auto-fill (ascending)"</strong> 按順序填充格子（1, 2, 3...）</li>
+        <li id="step3Item3"><strong>自動填充（倒序）</strong>：點擊 <strong>"Auto-fill (descending)"</strong> 反向填充格子</li>
+      </ul>
+    </div>
+
+    <div class="tutorial-step">
+      <h3 id="step4Title">步驟 4：合併圖片</h3>
+      <p id="step4Desc">當所有圖片都放置到表格後：</p>
+      <ul>
+        <li id="step4Item1">點擊 <strong>"Merge Table Images"</strong> 按鈕</li>
+        <li id="step4Item2">合併後的圖片會在上方顯示為畫布</li>
+        <li id="step4Item3">您可以調整表格配置並重新合併</li>
+      </ul>
+    </div>
+
+    <div class="tutorial-step">
+      <h3 id="step5Title">步驟 5：下載結果</h3>
+      <p id="step5Desc">合併完成後：</p>
+      <ul>
+        <li id="step5Item1">點擊 <strong>"下載合併圖片" (Download Merged Image)</strong> 按鈕</li>
+        <li id="step5Item2">選擇保存位置並完成下載</li>
+      </ul>
+    </div>
+
+    <div class="tutorial-tip">
+      <strong id="tipHeader">💡 提示 (Tips)：</strong>
+      <ul style="margin: 5px 0 0 20px;">
+        <li id="tip1">所有操作都在您的瀏覽器本地完成，您的圖片不會上傳到任何服務器</li>
+        <li id="tip2">點擊 <strong>"清空表格" (Clear table)</strong> 可以清除所有內容並重新開始</li>
+        <li id="tip3">您可以隨時調整行數、列數和間距來獲得不同的合併效果</li>
+      </ul>
+    </div>
+
+    <div class="tutorial-note">
+      <strong id="privacyHeader">🔒 隱私保護 (Privacy)：</strong>
+      <p id="privacyNote" style="margin: 5px 0 0 0;">此工具完全在本地運行，所有圖片處理都在您的設備上完成。我們不會存儲或上傳您的任何圖片。</p>
+    </div>
+  </div>
 
   <script>
     let canvasDataUrl = ''; // 儲存畫布數據 URL
