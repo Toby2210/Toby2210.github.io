@@ -1,11 +1,3 @@
-# Toby's Portfolio
-
-Welcome to my personal website! I'm Toby, a developer who enjoys building practical web tools and applications.
-
-## 🌐 Visit My Website
-
-Check out my live website at [https://toby2210.github.io/](https://toby2210.github.io/)
-
 ## 🛠️ Available Tools
 
 ### [Test File Generator](test-file-generator/index.html)
