@@ -51,6 +51,8 @@
   <title>圖片合併工具 - Image Merger Tool | 免費在線圖片拼接與合併工具</title>
   <!-- JSZip library for ZIP file extraction -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <!-- heic2any library for HEIC format support -->
+  <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -511,7 +513,7 @@
         step2Desc: "您可以使用以下兩種方式上傳圖片：",
         method1Title: "方法 A：上傳單張或多張圖片",
         method1Item1: "點擊 <strong>\"Choose File\"</strong> 按鈕",
-        method1Item2: "選擇一張或多張圖片文件（支援 JPG, PNG, GIF, BMP, WebP）",
+        method1Item2: "選擇一張或多張圖片文件（支援 JPG, PNG, GIF, BMP, WebP, HEIC）",
         method1Item3: "選擇的圖片會顯示在下方預覽區",
         method2Title: "方法 B：上傳 ZIP 檔案（快速上傳）",
         method2Item1: "準備一個包含圖片的 ZIP 檔案",
@@ -544,7 +546,9 @@
         pasteHint: "提示：您可以直接在此處貼上圖片 (按 Ctrl+V 或 Cmd+V)",
         pasteNotImage: "只接受圖片格式！請貼上圖片文件。",
         pasteSuccess: "已成功貼上 {count} 張圖片！",
-        pasteError: "加載圖片時發生錯誤。請稍後再試。"
+        pasteError: "加載圖片時發生錯誤。請稍後再試。",
+        uploadedImagesCount: "已上傳 {count} 張圖片",
+        heicConversionError: "無法轉換 HEIC 圖片，請使用其他格式。"
       },
       "en": {
         title: "Image Merger Tool",
@@ -588,7 +592,7 @@
         step2Desc: "You can upload images using two methods:",
         method1Title: "Method A: Upload Single or Multiple Images",
         method1Item1: "Click the <strong>\"Choose File\"</strong> button",
-        method1Item2: "Select one or multiple image files (JPG, PNG, GIF, BMP, WebP supported)",
+        method1Item2: "Select one or multiple image files (JPG, PNG, GIF, BMP, WebP, HEIC supported)",
         method1Item3: "Selected images will appear in the preview area below",
         method2Title: "Method B: Upload ZIP File (Quick Upload)",
         method2Item1: "Prepare a ZIP file containing your images",
@@ -621,7 +625,9 @@
         pasteHint: "Tip: You can paste images directly here (press Ctrl+V or Cmd+V)",
         pasteNotImage: "Only image formats accepted! Please paste an image file.",
         pasteSuccess: "Successfully pasted {count} image(s)!",
-        pasteError: "Error loading pasted images. Please try again."
+        pasteError: "Error loading pasted images. Please try again.",
+        uploadedImagesCount: "Uploaded {count} image(s)",
+        heicConversionError: "Unable to convert HEIC image, please use another format."
       }
     };
   </script>
@@ -905,6 +911,7 @@
       <label id="uploadImages-label">上傳圖片（拖放到表格）：</label>
       <input type="file" id="tableImageInput" accept="image/*,.zip" multiple style="margin-top: 10px;">
       <button id="clearAllImagesButton" onclick="clearAllUploadedImages()" style="margin-top: 10px; background-color: #dc3545;" title="清空所有圖片">清空所有圖片</button>
+      <div id="uploadedImagesCountDisplay" style="margin-top: 10px; font-weight: bold; color: #007bff;"></div>
       <div id="uploadedImagesContainer"></div>
     </div>
     
@@ -950,8 +957,9 @@
         <h4 id="method1Title">方法 A：上傳單張或多張圖片</h4>
         <ul>
           <li id="method1Item1">點擊 <strong>"Choose File"</strong> 按鈕</li>
-          <li id="method1Item2">選擇一張或多張圖片文件（支援 JPG, PNG, GIF, BMP, WebP）</li>
+          <li id="method1Item2">選擇一張或多張圖片文件（支援 JPG, PNG, GIF, BMP, WebP, HEIC）</li>
           <li id="method1Item3">選擇的圖片會顯示在下方預覽區</li>
+          <li>上傳的圖片數量會顯示在上方</li>
         </ul>
       </div>
 
@@ -1081,6 +1089,23 @@
       // Check multiple possible properties for the type
       const itemType = item.type || item.mimeType || '';
       return itemType.startsWith('image/');
+    }
+
+    // Helper function to convert HEIC files to supported format
+    async function convertHEICToBlob(heicFile) {
+      try {
+        if (typeof heic2any === 'function') {
+          const blob = await heic2any({
+            blob: heicFile,
+            toType: 'image/jpeg'
+          });
+          return blob;
+        }
+        return null;
+      } catch (err) {
+        console.error('Error converting HEIC:', err);
+        return null;
+      }
     }
 
     // Helper function to convert ClipboardItem to File (only for images)
@@ -1258,12 +1283,12 @@
       tableSettings.classList.add('show');
     })();
     
-    // Table image input handler - supports ZIP files and append mode
+    // Table image input handler - supports ZIP files, HEIC, and append mode
     document.getElementById('tableImageInput').addEventListener('change', async (event) => {
       const files = Array.from(event.target.files);
       if (files.length === 0) return;
       
-      // Process each file (including ZIP files)
+      // Process each file (including ZIP files and HEIC)
       const newFiles = [];
       const newImages = [];
       
@@ -1277,7 +1302,7 @@
             // Get all image files from ZIP
             const imageFiles = [];
             for (const [zipName, zipEntry] of Object.entries(zipContents.files)) {
-              if (!zipEntry.dir && zipEntry.name.match(/\.(jpg|jpeg|png|gif|bmp|webp)$/i)) {
+              if (!zipEntry.dir && zipEntry.name.match(/\.(jpg|jpeg|png|gif|bmp|webp|heic|heif)$/i)) {
                 const blob = await zipEntry.async('blob');
                 imageFiles.push({
                   name: zipEntry.name,
@@ -1299,6 +1324,20 @@
             console.error('Error loading ZIP file:', err);
             alert('無法讀取 ZIP 檔案：' + file.name + '\nFailed to read ZIP file: ' + file.name);
           }
+        } else if (file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif')) {
+          // Handle HEIC/HEIF file - convert to JPEG
+          try {
+            const convertedBlob = await convertHEICToBlob(file);
+            if (convertedBlob) {
+              const newFile = new File([convertedBlob], file.name.replace(/\.(heic|heif)$/i, '.jpg'), { type: 'image/jpeg', lastModified: file.lastModified });
+              newFiles.push(newFile);
+            } else {
+              alert('無法轉換 HEIC 圖片：' + file.name + '\nUnable to convert HEIC image: ' + file.name);
+            }
+          } catch (err) {
+            console.error('Error converting HEIC file:', err);
+            alert('無法轉換 HEIC 圖片：' + file.name + '\nUnable to convert HEIC image: ' + file.name);
+          }
         } else if (file.type.startsWith('image/')) {
           // Handle regular image file
           newFiles.push(file);
@@ -1313,6 +1352,9 @@
       
       // Display thumbnails
       displayUploadedImages();
+      
+      // Update image count display
+      updateImageCountDisplay();
       
       // Reset input value to allow re-uploading the same files
       event.target.value = '';
@@ -1345,6 +1387,17 @@
         
         container.appendChild(thumb);
       });
+      
+      // Update image count display
+      updateImageCountDisplay();
+    }
+    
+    // Update image count display
+    function updateImageCountDisplay() {
+      const countDisplay = document.getElementById('uploadedImagesCountDisplay');
+      const translation = translations[currentLanguage];
+      const count = uploadedTableImages.length;
+      countDisplay.textContent = translation.uploadedImagesCount.replace('{count}', count.toString());
     }
     
     // Create table grid
@@ -1543,6 +1596,7 @@
       uploadedTableFiles = [];
       uploadedTableImages = [];
       document.getElementById('uploadedImagesContainer').innerHTML = '';
+      document.getElementById('uploadedImagesCountDisplay').textContent = '';
       document.getElementById('tableImageInput').value = '';
     }
     
@@ -1724,7 +1778,7 @@
             // Get all image files from ZIP
             const imageFiles = [];
             for (const [zipName, zipEntry] of Object.entries(zipContents.files)) {
-              if (!zipEntry.dir && zipEntry.name.match(/\.(jpg|jpeg|png|gif|bmp|webp)$/i)) {
+              if (!zipEntry.dir && zipEntry.name.match(/\.(jpg|jpeg|png|gif|bmp|webp|heic|heif)$/i)) {
                 const blob = await zipEntry.async('blob');
                 imageFiles.push({
                   name: zipEntry.name,
@@ -1745,6 +1799,20 @@
           } catch (err) {
             console.error('Error loading ZIP file:', err);
             alert('無法讀取 ZIP 檔案：' + file.name + '\nFailed to read ZIP file: ' + file.name);
+          }
+        } else if (file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif')) {
+          // Handle HEIC/HEIF file - convert to JPEG
+          try {
+            const convertedBlob = await convertHEICToBlob(file);
+            if (convertedBlob) {
+              const newFile = new File([convertedBlob], file.name.replace(/\.(heic|heif)$/i, '.jpg'), { type: 'image/jpeg', lastModified: file.lastModified });
+              newFiles.push(newFile);
+            } else {
+              alert('無法轉換 HEIC 圖片：' + file.name + '\nUnable to convert HEIC image: ' + file.name);
+            }
+          } catch (err) {
+            console.error('Error converting HEIC file:', err);
+            alert('無法轉換 HEIC 圖片：' + file.name + '\nUnable to convert HEIC image: ' + file.name);
           }
         } else if (file.type.startsWith('image/')) {
           // Handle regular image file
