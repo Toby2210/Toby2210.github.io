@@ -43,6 +43,7 @@ Combine multiple images into a single table layout with customizable options.
 - All operations are performed locally in your browser - your images are never uploaded to any server
 - You can clear all images and start over using the **"Clear table"** button
 - The tool supports common image formats: JPG, PNG, GIF, BMP, WebP
+- **Quick Image Paste**: Use the **"Paste Image"** text field to quickly add images. Simply press **Ctrl+V** (Windows) or **Cmd+V** (Mac) to paste images from your clipboard as attachments. The field only accepts image pasting, not text input.
 
 ### [QR Code Receiver](QRcode/index.html)
 Receive and decode QR codes directly in your browser.

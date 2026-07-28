@@ -401,6 +401,69 @@
       margin: 0 0 10px 0;
       color: #004085;
     }
+    /* Paste input field styles */
+    #pasteInputContainer {
+      margin-top: 15px;
+      width: 100%;
+      max-width: 600px;
+    }
+    #pasteInputLabel {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 8px;
+      color: #333;
+    }
+    #pasteInput {
+      width: 100%;
+      padding: 12px 15px;
+      font-size: 16px;
+      border: 2px dashed #007bff;
+      border-radius: 8px;
+      background-color: #f8f9fa;
+      color: #555;
+      box-sizing: border-box;
+      transition: border-color 0.2s, background-color 0.2s;
+      cursor: text;
+      min-height: 50px;
+      resize: vertical;
+    }
+    #pasteInput:focus {
+      outline: none;
+      border-color: #0056b3;
+      background-color: #e7f1ff;
+    }
+    #pasteInput::placeholder {
+      color: #999;
+    }
+    #pasteInput.has-text {
+      background-color: #fff;
+      border-style: solid;
+    }
+    #pasteInput.drag-over {
+      border-color: #28a745;
+      background-color: #d4edda;
+    }
+    .paste-hint {
+      font-size: 13px;
+      color: #666;
+      margin-top: 6px;
+      text-align: center;
+    }
+    .paste-hint kbd {
+      background: #e9ecef;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    .paste-status {
+      font-size: 14px;
+      animation: fadeIn 0.3s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
   </style>
 </head>
 <body>
@@ -475,7 +538,13 @@
         tip3: "您可以隨時調整行數、列數和間距來獲得不同的合併效果",
         tipHeader: "💡 提示 (Tips)：",
         privacyNote: "此工具完全在本地運行，所有圖片處理都在您的設備上完成。我們不會存儲或上傳您的任何圖片。",
-        privacyHeader: "🔒 隱私保護 (Privacy)："
+        privacyHeader: "🔒 隱私保護 (Privacy)：",
+        pasteInputTitle: "貼上圖片",
+        pasteInputPlaceholder: "在此貼上圖片 (Ctrl+V / Cmd+V)",
+        pasteHint: "提示：您可以直接在此處貼上圖片 (按 Ctrl+V 或 Cmd+V)",
+        pasteNotImage: "只接受圖片格式！請貼上圖片文件。",
+        pasteSuccess: "已成功貼上 {count} 張圖片！",
+        pasteError: "加載圖片時發生錯誤。請稍後再試。"
       },
       "en": {
         title: "Image Merger Tool",
@@ -546,7 +615,13 @@
         tip3: "You can adjust rows, columns, and spacing at any time to get different merge effects",
         tipHeader: "💡 Tips:",
         privacyNote: "This tool runs completely locally - all image processing happens on your device. We do not store or upload any of your images.",
-        privacyHeader: "🔒 Privacy:"
+        privacyHeader: "🔒 Privacy:",
+        pasteInputTitle: "Paste Image",
+        pasteInputPlaceholder: "Paste image here (Ctrl+V / Cmd+V)",
+        pasteHint: "Tip: You can paste images directly here (press Ctrl+V or Cmd+V)",
+        pasteNotImage: "Only image formats accepted! Please paste an image file.",
+        pasteSuccess: "Successfully pasted {count} image(s)!",
+        pasteError: "Error loading pasted images. Please try again."
       }
     };
   </script>
@@ -625,6 +700,17 @@
     }
     if (document.getElementById("tableImageInput")) {
       document.getElementById("tableImageInput").setAttribute("title", translation.selectImages);
+    }
+    
+    // Paste input field translations
+    if (document.getElementById("pasteInputLabel")) {
+      document.getElementById("pasteInputLabel").textContent = translation.pasteInputTitle;
+    }
+    if (document.getElementById("pasteInput")) {
+      document.getElementById("pasteInput").placeholder = translation.pasteInputPlaceholder;
+    }
+    if (document.getElementById("pasteHint")) {
+      document.getElementById("pasteHint").textContent = translation.pasteHint;
     }
 
     // Tutorial section translations
@@ -821,6 +907,14 @@
       <button id="clearAllImagesButton" onclick="clearAllUploadedImages()" style="margin-top: 10px; background-color: #dc3545;" title="清空所有圖片">清空所有圖片</button>
       <div id="uploadedImagesContainer"></div>
     </div>
+    
+    <!-- Paste input field for images -->
+    <div id="pasteInputContainer">
+      <label id="pasteInputLabel" for="pasteInput">貼上圖片</label>
+      <textarea id="pasteInput" placeholder="在此貼上圖片 (Ctrl+V / Cmd+V) 或輸入文字" rows="3"></textarea>
+      <div id="pasteStatus" class="paste-status" style="display: none; margin-top: 8px; padding: 8px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; color: #155724; font-size: 14px;"></div>
+      <div class="paste-hint" id="pasteHint">提示：您可以直接在此處貼上圖片 (按 Ctrl+V 或 Cmd+V)</div>
+    </div>
   </div>
   
   <div id="originalResultContainer">
@@ -980,6 +1074,181 @@
       clearAllResults();
       //clearAllUploadedImages();
     }
+    
+    // Helper function to check if a clipboard item is an image
+    function isClipboardItemImage(item) {
+      if (!item) return false;
+      // Check multiple possible properties for the type
+      const itemType = item.type || item.mimeType || '';
+      return itemType.startsWith('image/');
+    }
+
+    // Helper function to convert ClipboardItem to File (only for images)
+    async function clipboardItemToFile(clipboardItem) {
+      try {
+        // Check if it's an image type - be more lenient
+        const itemType = clipboardItem.type || clipboardItem.mimeType || '';
+        if (!itemType || !itemType.startsWith('image/')) {
+          throw new Error('No image type found in clipboard item');
+        }
+        
+        // Try to get the blob from the clipboard item using different methods
+        let blob;
+        
+        // Method 1: Try the standard getType method
+        if (typeof clipboardItem.getType === 'function') {
+          blob = await clipboardItem.getType(itemType);
+        } 
+        // Method 2: Try to get as blob directly (some browsers support this)
+        else if (typeof clipboardItem.getAsFile === 'function') {
+          blob = clipboardItem.getAsFile();
+        }
+        // Method 3: Try to get as data URL and convert to blob
+        else if (typeof clipboardItem.getData === 'function') {
+          const dataUrl = clipboardItem.getData(itemType);
+          if (dataUrl) {
+            const response = await fetch(dataUrl);
+            blob = await response.blob();
+          }
+        }
+        
+        if (!blob) {
+          throw new Error('Could not get blob from clipboard item');
+        }
+        
+        const mimeType = blob.type || itemType || 'application/octet-stream';
+        
+        // Generate a filename based on the MIME type
+        let extension = 'png';
+        if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+          extension = 'jpg';
+        } else if (mimeType === 'image/gif') {
+          extension = 'gif';
+        } else if (mimeType === 'image/webp') {
+          extension = 'webp';
+        } else if (mimeType === 'image/bmp') {
+          extension = 'bmp';
+        }
+        
+        const timestamp = Date.now();
+        return new File([blob], `pasted-image-${timestamp}.${extension}`, { type: mimeType });
+      } catch (err) {
+        console.error('Error converting clipboard item to file:', err);
+        throw err;
+      }
+    }
+    
+    // Handle paste event for the paste input field
+    const pasteInput = document.getElementById('pasteInput');
+    
+    // Prevent text input but allow paste
+    pasteInput.addEventListener('keydown', (e) => {
+      // Allow Ctrl+V and Cmd+V for paste
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+        return;
+      }
+      // Allow Backspace and Delete to clear the field
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        return;
+      }
+      // Prevent all other keys
+      e.preventDefault();
+    });
+    
+    pasteInput.addEventListener('keypress', (e) => {
+      e.preventDefault();
+    });
+    
+    pasteInput.addEventListener('keyup', (e) => {
+      // Prevent pasting text by clearing any non-image content
+      if (pasteInput.value && !e.ctrlKey && !e.metaKey) {
+        pasteInput.value = '';
+      }
+    });
+    
+    // Handle paste event
+    pasteInput.addEventListener('paste', async (event) => {
+      event.preventDefault();
+      
+      const translation = translations[currentLanguage];
+      const clipboardData = event.clipboardData || window.clipboardData;
+      
+      if (!clipboardData) {
+        alert('無法訪問剪貼板。請使用瀏覽器支援剪貼板的功能。');
+        return;
+      }
+      
+      const items = clipboardData.items;
+      
+      let pastedCount = 0;
+      const pastedFiles = [];
+      
+      console.log('Paste event triggered. Items:', items);
+      console.log('Number of items:', items.length);
+      
+      // Process each clipboard item
+      for (const item of items) {
+        console.log('Processing item, type:', item.type, 'mimeType:', item.mimeType);
+        try {
+          // Check if this item is an image - be more lenient with the check
+          const itemType = item.type || item.mimeType || '';
+          console.log('Item type check:', itemType, 'starts with image/:', itemType.startsWith('image/'));
+          
+          if (itemType && itemType.startsWith('image/')) {
+            const file = await clipboardItemToFile(item);
+            pastedFiles.push(file);
+            pastedCount++;
+            console.log('Successfully processed image file:', file.name);
+          }
+        } catch (err) {
+          console.error('Error processing pasted item:', err);
+        }
+      }
+      
+      if (pastedCount === 0) {
+        // Show error message in pasteStatus
+        const pasteStatus = document.getElementById('pasteStatus');
+        pasteStatus.style.display = 'block';
+        pasteStatus.style.background = '#f8d7da';
+        pasteStatus.style.borderColor = '#f5c6cb';
+        pasteStatus.style.color = '#721c24';
+        pasteStatus.textContent = '剪貼板中沒有圖片內容。';
+        setTimeout(() => { pasteStatus.style.display = 'none'; }, 3000);
+        return;
+      }
+      
+      try {
+        // Add pasted files to uploaded files
+        uploadedTableFiles = [...uploadedTableFiles, ...pastedFiles].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+        
+        // Load all images (existing + new)
+        uploadedTableImages = await Promise.all(uploadedTableFiles.map(file => loadImage(file)));
+        
+        // Display thumbnails
+        displayUploadedImages();
+        
+        // Show success message in pasteStatus
+        const pasteStatus = document.getElementById('pasteStatus');
+        const successMessage = translation.pasteSuccess.replace('{count}', pastedCount.toString());
+        pasteStatus.style.display = 'block';
+        pasteStatus.style.background = '#d4edda';
+        pasteStatus.style.borderColor = '#c3e6cb';
+        pasteStatus.style.color = '#155724';
+        pasteStatus.textContent = successMessage;
+        setTimeout(() => { pasteStatus.style.display = 'none'; }, 3000);
+        
+        // Note: Don't clear the textarea value so users can keep their text
+      } catch (err) {
+        console.error('Error loading pasted images:', err);
+        const pasteStatus = document.getElementById('pasteStatus');
+        pasteStatus.style.display = 'block';
+        pasteStatus.style.background = '#f8d7da';
+        pasteStatus.style.borderColor = '#f5c6cb';
+        pasteStatus.style.color = '#721c24';
+        pasteStatus.textContent = translation.pasteError;
+        setTimeout(() => { pasteStatus.style.display = 'none'; }, 3000);
+      }
+    });
     
     // Initialize UI based on default mode (table mode)
     (function() {
