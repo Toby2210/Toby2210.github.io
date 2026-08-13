@@ -4,24 +4,25 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>P2P 快傳 (Send Anywhere 風格)</title>
-  <!-- 引入 PeerJS 與 JSZip 函式庫 -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 500px; margin: 40px auto; padding: 20px; line-height: 1.6; }
     .card { border: 1px solid #ddd; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-    .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #e63946; text-align: center; margin: 15px 0; }
+    .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #e63946; text-align: center; margin: 10px 0; }
+    .timer { text-align: center; color: #d90429; font-weight: bold; font-size: 14px; margin-bottom: 10px; }
     input[type="text"] { font-size: 20px; letter-spacing: 2px; text-align: center; width: 100%; padding: 10px; box-sizing: border-box; margin-bottom: 10px; }
     button { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; }
-    button:disabled { background-color: #ccc; }
-    .status { font-weight: bold; color: #555; margin-top: 10px; text-align: center; }
+    button:disabled { background-color: #ccc; cursor: not-allowed; }
+    .status { font-weight: bold; color: #555; margin-top: 10px; text-align: center; word-break: break-all; }
+    progress { width: 100%; height: 20px; margin-top: 10px; display: none; }
   </style>
 </head>
 <body>
 
   <h2>P2P 檔案快傳</h2>
 
-  <!-- 傳送端卡片 -->
+  <!-- 傳送端 -->
   <div class="card">
     <h3>1. 發送檔案</h3>
     <input type="file" id="file-input" multiple />
@@ -31,29 +32,53 @@
     <div id="send-area" style="display:none;">
       <p style="text-align: center; margin-bottom: 0;">接收金鑰 (6 位數字)：</p>
       <div class="code-display" id="passkey-display">------</div>
-      <p style="font-size: 13px; color: #666; text-align: center;">請保持此網頁開啟，直到接收端下載完成。</p>
+      <div class="timer" id="timer-display">有效時間：10:00</div>
     </div>
+    
+    <progress id="send-progress" value="0" max="100"></progress>
     <div class="status" id="send-status"></div>
   </div>
 
-  <!-- 接收端卡片 -->
+  <!-- 接收端 -->
   <div class="card">
     <h3>2. 接收檔案</h3>
     <input type="text" id="receive-code" placeholder="輸入 6 位數字 Key" maxlength="6" />
-    <button onclick="startReceiving()">接收檔案</button>
+    <button id="receive-btn" onclick="startReceiving()">接收檔案</button>
+    
+    <progress id="receive-progress" value="0" max="100"></progress>
     <div class="status" id="receive-status"></div>
   </div>
 
   <script>
+    const CHUNK_SIZE = 64 * 1024; // 64KB 分區塊傳輸，防 Memory Crash
     let sendPeer = null;
-    let preparedPayload = null; // 存放已準備好（或已 Zip 化）的檔案數據
+    let preparedBlob = null;
+    let preparedMeta = null;
+    let expireTimer = null;
+    let countdownInterval = null;
 
-    // 隨機產生 6 位數字 (100000 - 999999)
     function generate6DigitCode() {
       return Math.floor(100000 + Math.random() * 900000).toString();
     }
 
-    // --- 發送端邏輯 ---
+    // --- 清理及銷毀 Key 邏輯 ---
+    function cleanupSendState(message = '') {
+      if (expireTimer) clearTimeout(expireTimer);
+      if (countdownInterval) clearInterval(countdownInterval);
+      if (sendPeer) {
+        sendPeer.destroy();
+        sendPeer = null;
+      }
+      preparedBlob = null;
+      preparedMeta = null;
+
+      document.getElementById('send-area').style.display = 'none';
+      document.getElementById('send-btn').disabled = false;
+      document.getElementById('file-input').value = '';
+      if (message) document.getElementById('send-status').innerText = message;
+    }
+
+    // --- 傳送端 ---
     async function startSending() {
       const fileInput = document.getElementById('file-input');
       const files = fileInput.files;
@@ -65,122 +90,196 @@
 
       const sendBtn = document.getElementById('send-btn');
       const sendStatus = document.getElementById('send-status');
+      const sendProgress = document.getElementById('send-progress');
+      
       sendBtn.disabled = true;
+      sendProgress.style.display = 'none';
+      sendProgress.value = 0;
 
-      // 1. 如果選取多於 1 個檔案，進行打包 Zip
+      // 1. 打包或準備 Blob
       if (files.length > 1) {
-        sendStatus.innerText = '正在將多個檔案壓縮為 ZIP...';
+        sendStatus.innerText = '正在將多個檔案打包為 ZIP...';
         const zip = new JSZip();
         for (let i = 0; i < files.length; i++) {
           zip.file(files[i].name, files[i]);
         }
-        // 壓成 Blob
-        const zipBlob = await zip.generateAsync({ type: 'blob' });
-        preparedPayload = {
-          file: zipBlob,
-          name: `archive_${Date.now()}.zip`,
-          type: 'application/zip',
-          size: zipBlob.size
-        };
+        preparedBlob = await zip.generateAsync({ type: 'blob' });
+        preparedMeta = { name: `archive_${Date.now()}.zip`, type: 'application/zip', size: preparedBlob.size };
       } else {
-        // 單一檔案直傳
-        const file = files[0];
-        preparedPayload = {
-          file: file,
-          name: file.name,
-          type: file.type,
-          size: file.size
-        };
+        preparedBlob = files[0];
+        preparedMeta = { name: files[0].name, type: files[0].type, size: files[0].size };
       }
 
-      // 2. 產生 6 位數作為 Peer ID 並初始化 Peer
+      // 2. 建立 Peer
       const passkey = generate6DigitCode();
-      
-      // 如果之前建立過連線，先銷毀
       if (sendPeer) sendPeer.destroy();
 
-      sendStatus.innerText = '正在連線至信令伺服器...';
+      sendStatus.innerText = '連線至信令伺服器...';
       sendPeer = new Peer(passkey);
 
       sendPeer.on('open', (id) => {
         document.getElementById('passkey-display').innerText = id;
         document.getElementById('send-area').style.display = 'block';
-        sendStatus.innerText = '等待對方輸入 Key 連線...';
+        sendStatus.innerText = '等待對方輸入 Key...';
+
+        // 啟動 10 分鐘倒數
+        startTimer(10 * 60);
       });
 
       sendPeer.on('error', (err) => {
-        // 若隨機 ID 碰撞（極少發生），重新嘗試
         if (err.type === 'unavailable-id') {
-          startSending();
+          startSending(); // Code 重複時重試
         } else {
-          sendStatus.innerText = '發生錯誤: ' + err.message;
-          sendBtn.disabled = false;
+          cleanupSendState('連線錯誤：' + err.message);
         }
       });
 
-      // 3. 聽取接收端的連線要求，一連上就發送檔案
+      // 3. 監聽接收端連線
       sendPeer.on('connection', (conn) => {
-        sendStatus.innerText = '接收端已連線，發送檔案中...';
-        conn.on('open', () => {
-          conn.send(preparedPayload);
-          sendStatus.innerText = '檔案發送成功！';
-          sendBtn.disabled = false;
+        // 有接收端連入，暫停倒數計時
+        if (expireTimer) clearTimeout(expireTimer);
+        if (countdownInterval) clearInterval(countdownInterval);
+        
+        sendStatus.innerText = '接收端已連線，開始傳送...';
+        sendProgress.style.display = 'block';
+
+        conn.on('open', async () => {
+          // 先傳 Meta 資料
+          conn.send({ type: 'HEADER', meta: preparedMeta });
+
+          // 分塊傳送數據 (Chunking)
+          let offset = 0;
+          while (offset < preparedBlob.size) {
+            const slice = preparedBlob.slice(offset, offset + CHUNK_SIZE);
+            const buffer = await slice.arrayBuffer();
+            conn.send({ type: 'CHUNK', chunk: buffer });
+            
+            offset += CHUNK_SIZE;
+            const progress = Math.min(100, Math.round((offset / preparedBlob.size) * 100));
+            sendProgress.value = progress;
+            sendStatus.innerText = `傳送中... ${progress}%`;
+
+            // 緩衝區控制，避免記憶體溢出
+            if (conn.dataChannel.bufferedAmount > 16 * 1024 * 1024) {
+              await new Promise(r => setTimeout(r, 50));
+            }
+          }
+
+          // 發送完成標記
+          conn.send({ type: 'END' });
+        });
+
+        // 收到接收端的成功 Ack 後刪除 Key
+        conn.on('data', (data) => {
+          if (data.type === 'ACK') {
+            sendProgress.style.display = 'none';
+            cleanupSendState('傳送成功！Key 已銷毀。');
+          }
         });
       });
     }
 
-    // --- 接收端邏輯 ---
+    // 倒數計時器
+    function startTimer(seconds) {
+      let timeLeft = seconds;
+      const timerDisplay = document.getElementById('timer-display');
+      
+      if (expireTimer) clearTimeout(expireTimer);
+      if (countdownInterval) clearInterval(countdownInterval);
+
+      countdownInterval = setInterval(() => {
+        timeLeft--;
+        const mins = Math.floor(timeLeft / 60).toString().padStart(2, '0');
+        const secs = (timeLeft % 60).toString().padStart(2, '0');
+        timerDisplay.innerText = `有效時間：${mins}:${secs}`;
+
+        if (timeLeft <= 0) {
+          clearInterval(countdownInterval);
+        }
+      }, 1000);
+
+      expireTimer = setTimeout(() => {
+        cleanupSendState('10 分鐘已過，Key 已失效。');
+      }, seconds * 1000);
+    }
+
+
+    // --- 接收端 ---
     function startReceiving() {
       const codeInput = document.getElementById('receive-code').value.trim();
       const receiveStatus = document.getElementById('receive-status');
+      const receiveProgress = document.getElementById('receive-progress');
+      const receiveBtn = document.getElementById('receive-btn');
 
       if (codeInput.length !== 6 || isNaN(codeInput)) {
         alert('請輸入正確的 6 位數字金鑰！');
         return;
       }
 
-      receiveStatus.innerText = '搜尋並連線中...';
+      receiveBtn.disabled = true;
+      receiveStatus.innerText = '搜尋連線中...';
+      receiveProgress.style.display = 'none';
+      receiveProgress.value = 0;
 
-      // 接收端使用隨機 Peer ID 即可
       const receivePeer = new Peer();
+      let fileMeta = null;
+      let receivedChunks = [];
+      let receivedSize = 0;
 
       receivePeer.on('open', () => {
-        // 連接到傳送端設定的 6 位數 Key
         const conn = receivePeer.connect(codeInput);
 
         conn.on('open', () => {
-          receiveStatus.innerText = '已連線，等待接收檔案...';
+          receiveStatus.innerText = '已連線，等待傳送資料...';
         });
 
-        // 收到檔案數據
         conn.on('data', (data) => {
-          receiveStatus.innerText = '接收完成！正在觸發下載...';
+          if (data.type === 'HEADER') {
+            fileMeta = data.meta;
+            receiveProgress.style.display = 'block';
+            receiveStatus.innerText = '開始接收檔案...';
+          } 
+          else if (data.type === 'CHUNK') {
+            receivedChunks.push(data.chunk);
+            receivedSize += data.chunk.byteLength;
+            
+            const progress = Math.min(100, Math.round((receivedSize / fileMeta.size) * 100));
+            receiveProgress.value = progress;
+            receiveStatus.innerText = `接收中... ${progress}%`;
+          } 
+          else if (data.type === 'END') {
+            // 組裝檔案並觸發下載
+            receiveStatus.innerText = '組裝檔案中...';
+            const blob = new Blob(receivedChunks, { type: fileMeta.type });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileMeta.name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
 
-          const blob = new Blob([data.file], { type: data.type });
-          const url = URL.createObjectURL(blob);
-          
-          // 自動觸發瀏覽器下載
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = data.name;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
+            receiveStatus.innerText = `成功接收：${fileMeta.name}`;
+            receiveProgress.style.display = 'none';
+            receiveBtn.disabled = false;
 
-          receiveStatus.innerText = `成功接收：${data.name}`;
-          
-          // 下載完後可關閉此 Peer 節省資源
-          setTimeout(() => receivePeer.destroy(), 2000);
+            // 發送 ACK 讓發送端銷毀 Key，隨後斷開連線
+            conn.send({ type: 'ACK' });
+            setTimeout(() => receivePeer.destroy(), 1000);
+          }
         });
 
-        conn.on('error', (err) => {
-          receiveStatus.innerText = '連線失敗或 Key 無效。';
+        conn.on('error', () => {
+          receiveStatus.innerText = '連線中斷或 Key 無效。';
+          receiveBtn.disabled = false;
         });
       });
 
       receivePeer.on('error', (err) => {
-        receiveStatus.innerText = '無法建立接收端連線：' + err.message;
+        receiveStatus.innerText = '找不到此 Key 或已失效。';
+        receiveBtn.disabled = false;
       });
     }
   </script>
