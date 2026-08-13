@@ -1,67 +1,131 @@
 <!DOCTYPE html>
-<html lang="zh-HK">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>P2P 快傳 (Send Anywhere 風格)</title>
+  <title>P2P Fast Transfer</title>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/streamsaver@2.0.6/StreamSaver.min.js"></script>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 500px; margin: 40px auto; padding: 20px; line-height: 1.6; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 500px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #333; }
     .card { border: 1px solid #ddd; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    .drop-zone { border: 2px dashed #007bff; border-radius: 8px; padding: 25px; text-align: center; color: #666; cursor: pointer; transition: background 0.2s, border-color 0.2s; background: #f8f9fa; }
+    .drop-zone.dragover { background: #e9f2ff; border-color: #0056b3; color: #0056b3; }
+    .drop-zone p { margin: 0; font-size: 14px; }
+    .file-list-preview { margin-top: 10px; font-size: 13px; color: #555; text-align: left; word-break: break-all; max-height: 80px; overflow-y: auto; }
     .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #e63946; text-align: center; margin: 10px 0; }
     .timer { text-align: center; color: #d90429; font-weight: bold; font-size: 14px; margin-bottom: 10px; }
     input[type="text"] { font-size: 20px; letter-spacing: 2px; text-align: center; width: 100%; padding: 10px; box-sizing: border-box; margin-bottom: 10px; }
-    button { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; }
+    button { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: 600; }
     button:disabled { background-color: #ccc; cursor: not-allowed; }
     .status { font-weight: bold; color: #555; margin-top: 10px; text-align: center; word-break: break-all; }
+    .speed-info { font-size: 13px; color: #007bff; text-align: center; margin-top: 5px; font-weight: bold; }
     progress { width: 100%; height: 20px; margin-top: 10px; display: none; }
   </style>
 </head>
 <body>
 
-  <h2>P2P 檔案快傳</h2>
+  <h2>P2P Fast Transfer</h2>
 
-  <!-- 傳送端 -->
+  <!-- Sender -->
   <div class="card">
-    <h3>1. 發送檔案</h3>
-    <input type="file" id="file-input" multiple />
-    <br><br>
-    <button id="send-btn" onclick="startSending()">產生 Key 並傳送</button>
+    <h3>1. Send Files</h3>
+    
+    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+      <p>📁 Drag & Drop files here or <strong>browse</strong></p>
+      <input type="file" id="file-input" multiple style="display: none;" onchange="handleFileSelect(this.files)" />
+      <div class="file-list-preview" id="file-preview"></div>
+    </div>
+    
+    <br>
+    <button id="send-btn" onclick="startSending()">Generate Code & Send</button>
 
     <div id="send-area" style="display:none;">
-      <p style="text-align: center; margin-bottom: 0;">接收金鑰 (6 位數字)：</p>
+      <p style="text-align: center; margin-bottom: 0;">Receive Key (6 Digits):</p>
       <div class="code-display" id="passkey-display">------</div>
-      <div class="timer" id="timer-display">有效時間：10:00</div>
+      <div class="timer" id="timer-display">Expires in: 10:00</div>
     </div>
     
     <progress id="send-progress" value="0" max="100"></progress>
+    <div class="speed-info" id="send-speed"></div>
     <div class="status" id="send-status"></div>
   </div>
 
-  <!-- 接收端 -->
+  <!-- Receiver -->
   <div class="card">
-    <h3>2. 接收檔案</h3>
-    <input type="text" id="receive-code" placeholder="輸入 6 位數字 Key" maxlength="6" />
-    <button id="receive-btn" onclick="startReceiving()">接收檔案</button>
+    <h3>2. Receive Files</h3>
+    <input type="text" id="receive-code" placeholder="Enter 6-digit Key" maxlength="6" />
+    <button id="receive-btn" onclick="startReceiving()">Receive Files</button>
     
     <progress id="receive-progress" value="0" max="100"></progress>
+    <div class="speed-info" id="receive-speed"></div>
     <div class="status" id="receive-status"></div>
   </div>
 
   <script>
-    const CHUNK_SIZE = 64 * 1024; // 64KB 分區塊傳輸，防 Memory Crash
+    // Configuration Fixes: 4MB Chunk Size & 64MB Buffer
+    const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB
+    const MAX_BUFFERED_AMOUNT = 64 * 1024 * 1024; // 64MB
+    
     let sendPeer = null;
-    let preparedBlob = null;
-    let preparedMeta = null;
     let expireTimer = null;
     let countdownInterval = null;
+    let selectedFiles = [];
+
+    // Setup Enter Key Trigger for Code Input
+    document.getElementById('receive-code').addEventListener('keydown', function(event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        startReceiving();
+      }
+    });
+
+    // Drag & Drop Handlers
+    const dropZone = document.getElementById('drop-zone');
+    
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+      }, false);
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      const dt = e.dataTransfer;
+      if (dt.files && dt.files.length > 0) {
+        handleFileSelect(dt.files);
+      }
+    });
+
+    function handleFileSelect(files) {
+      selectedFiles = Array.from(files);
+      const preview = document.getElementById('file-preview');
+      if (selectedFiles.length === 1) {
+        preview.innerText = `Selected: ${selectedFiles[0].name}`;
+      } else if (selectedFiles.length > 1) {
+        preview.innerText = `Selected ${selectedFiles.length} files (${selectedFiles.map(f => f.name).join(', ')})`;
+      } else {
+        preview.innerText = '';
+      }
+    }
 
     function generate6DigitCode() {
       return Math.floor(100000 + Math.random() * 900000).toString();
     }
 
-    // --- 清理及銷毀 Key 邏輯 ---
+    function formatSpeed(bytesPerSec) {
+      if (bytesPerSec > 1024 * 1024) return (bytesPerSec / (1024 * 1024)).toFixed(1) + ' MB/s';
+      return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
+    }
+
     function cleanupSendState(message = '') {
       if (expireTimer) clearTimeout(expireTimer);
       if (countdownInterval) clearInterval(countdownInterval);
@@ -69,121 +133,151 @@
         sendPeer.destroy();
         sendPeer = null;
       }
-      preparedBlob = null;
-      preparedMeta = null;
-
+      selectedFiles = [];
       document.getElementById('send-area').style.display = 'none';
       document.getElementById('send-btn').disabled = false;
       document.getElementById('file-input').value = '';
+      document.getElementById('file-preview').innerText = '';
+      document.getElementById('send-speed').innerText = '';
       if (message) document.getElementById('send-status').innerText = message;
     }
 
-    // --- 傳送端 ---
+    // --- Sender ---
     async function startSending() {
-      const fileInput = document.getElementById('file-input');
-      const files = fileInput.files;
-
-      if (files.length === 0) {
-        alert('請先選取至少一個檔案！');
+      if (selectedFiles.length === 0) {
+        alert('Please select or drop at least one file!');
         return;
       }
 
+      const files = [...selectedFiles];
       const sendBtn = document.getElementById('send-btn');
       const sendStatus = document.getElementById('send-status');
       const sendProgress = document.getElementById('send-progress');
+      const sendSpeed = document.getElementById('send-speed');
       
       sendBtn.disabled = true;
-      sendProgress.style.display = 'none';
-      sendProgress.value = 0;
+      sendSpeed.innerText = '';
 
-      // 1. 打包或準備 Blob
-      if (files.length > 1) {
-        sendStatus.innerText = '正在將多個檔案打包為 ZIP...';
-        const zip = new JSZip();
-        for (let i = 0; i < files.length; i++) {
-          zip.file(files[i].name, files[i]);
-        }
-        preparedBlob = await zip.generateAsync({ type: 'blob' });
-        preparedMeta = { name: `archive_${Date.now()}.zip`, type: 'application/zip', size: preparedBlob.size };
-      } else {
-        preparedBlob = files[0];
-        preparedMeta = { name: files[0].name, type: files[0].type, size: files[0].size };
-      }
-
-      // 2. 建立 Peer
       const passkey = generate6DigitCode();
       if (sendPeer) sendPeer.destroy();
 
-      sendStatus.innerText = '連線至信令伺服器...';
-      sendPeer = new Peer(passkey);
+      sendPeer = new Peer(passkey, {
+        config: {
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        }
+      });
 
       sendPeer.on('open', (id) => {
         document.getElementById('passkey-display').innerText = id;
         document.getElementById('send-area').style.display = 'block';
-        sendStatus.innerText = '等待對方輸入 Key...';
-
-        // 啟動 10 分鐘倒數
         startTimer(10 * 60);
       });
 
       sendPeer.on('error', (err) => {
         if (err.type === 'unavailable-id') {
-          startSending(); // Code 重複時重試
+          startSending();
         } else {
-          cleanupSendState('連線錯誤：' + err.message);
+          cleanupSendState('Connection error: ' + err.message);
         }
       });
 
-      // 3. 監聽接收端連線
+      // Background ZIP Packaging with Progress Callback
+      let fileToSend = null;
+      const prepareFilePromise = (async () => {
+        if (files.length > 1) {
+          sendProgress.style.display = 'block';
+          sendProgress.value = 0;
+          sendStatus.innerText = 'Creating ZIP archive: 0%';
+
+          const zip = new JSZip();
+          for (const f of files) {
+            zip.file(f.name, f);
+          }
+
+          const zipBlob = await zip.generateAsync(
+            { type: 'blob', compression: 'STORE' },
+            (metadata) => {
+              const percent = Math.floor(metadata.percent);
+              sendProgress.value = percent;
+              sendStatus.innerText = `Creating ZIP archive: ${percent}%`;
+            }
+          );
+
+          sendStatus.innerText = 'ZIP ready. Waiting for recipient...';
+          sendProgress.style.display = 'none';
+
+          return new File([zipBlob], `archive_${Date.now()}.zip`, { type: 'application/zip' });
+        } else {
+          sendStatus.innerText = 'Waiting for recipient...';
+          return files[0];
+        }
+      })();
+
       sendPeer.on('connection', (conn) => {
-        // 有接收端連入，暫停倒數計時
         if (expireTimer) clearTimeout(expireTimer);
         if (countdownInterval) clearInterval(countdownInterval);
         
-        sendStatus.innerText = '接收端已連線，開始傳送...';
-        sendProgress.style.display = 'block';
-
         conn.on('open', async () => {
-          // 先傳 Meta 資料
-          conn.send({ type: 'HEADER', meta: preparedMeta });
+          sendStatus.innerText = 'Confirming file package...';
+          fileToSend = await prepareFilePromise;
 
-          // 分塊傳送數據 (Chunking)
+          sendStatus.innerText = 'Sending file...';
+          sendProgress.style.display = 'block';
+          sendProgress.value = 0;
+
+          conn.send({
+            type: 'FILE_HEADER',
+            name: fileToSend.name,
+            size: fileToSend.size,
+            fileType: fileToSend.type
+          });
+
           let offset = 0;
-          while (offset < preparedBlob.size) {
-            const slice = preparedBlob.slice(offset, offset + CHUNK_SIZE);
+          let startTime = Date.now();
+          let lastTime = startTime;
+          let lastOffset = 0;
+
+          while (offset < fileToSend.size) {
+            const slice = fileToSend.slice(offset, offset + CHUNK_SIZE);
             const buffer = await slice.arrayBuffer();
             conn.send({ type: 'CHUNK', chunk: buffer });
             
             offset += CHUNK_SIZE;
-            const progress = Math.min(100, Math.round((offset / preparedBlob.size) * 100));
-            sendProgress.value = progress;
-            sendStatus.innerText = `傳送中... ${progress}%`;
 
-            // 緩衝區控制，避免記憶體溢出
-            if (conn.dataChannel.bufferedAmount > 16 * 1024 * 1024) {
-              await new Promise(r => setTimeout(r, 50));
+            const now = Date.now();
+            if (now - lastTime >= 500) {
+              const bytesSent = Math.min(offset, fileToSend.size) - lastOffset;
+              const speed = (bytesSent / ((now - lastTime) / 1000));
+              sendSpeed.innerText = `Speed: ${formatSpeed(speed)}`;
+              lastTime = now;
+              lastOffset = Math.min(offset, fileToSend.size);
+            }
+
+            while (conn.dataChannel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+              await new Promise(r => setTimeout(r, 1));
             }
           }
 
-          // 發送完成標記
-          conn.send({ type: 'END' });
+          conn.send({ type: 'ALL_END' });
         });
 
-        // 收到接收端的成功 Ack 後刪除 Key
         conn.on('data', (data) => {
-          if (data.type === 'ACK') {
+          if (data.type === 'PROGRESS') {
+            sendProgress.value = data.percent;
+            sendStatus.innerText = `Recipient receiving... ${data.percent}%`;
+          }
+          else if (data.type === 'ACK') {
+            sendProgress.value = 100;
             sendProgress.style.display = 'none';
-            cleanupSendState('傳送成功！Key 已銷毀。');
+            cleanupSendState('Transfer complete! Key destroyed.');
           }
         });
       });
     }
 
-    // 倒數計時器
     function startTimer(seconds) {
       let timeLeft = seconds;
       const timerDisplay = document.getElementById('timer-display');
-      
       if (expireTimer) clearTimeout(expireTimer);
       if (countdownInterval) clearInterval(countdownInterval);
 
@@ -191,94 +285,120 @@
         timeLeft--;
         const mins = Math.floor(timeLeft / 60).toString().padStart(2, '0');
         const secs = (timeLeft % 60).toString().padStart(2, '0');
-        timerDisplay.innerText = `有效時間：${mins}:${secs}`;
-
-        if (timeLeft <= 0) {
-          clearInterval(countdownInterval);
-        }
+        timerDisplay.innerText = `Expires in: ${mins}:${secs}`;
+        if (timeLeft <= 0) clearInterval(countdownInterval);
       }, 1000);
 
       expireTimer = setTimeout(() => {
-        cleanupSendState('10 分鐘已過，Key 已失效。');
+        cleanupSendState('Key expired (10 minutes elapsed).');
       }, seconds * 1000);
     }
 
-
-    // --- 接收端 ---
+    // --- Receiver ---
     function startReceiving() {
       const codeInput = document.getElementById('receive-code').value.trim();
       const receiveStatus = document.getElementById('receive-status');
       const receiveProgress = document.getElementById('receive-progress');
+      const receiveSpeed = document.getElementById('receive-speed');
       const receiveBtn = document.getElementById('receive-btn');
 
       if (codeInput.length !== 6 || isNaN(codeInput)) {
-        alert('請輸入正確的 6 位數字金鑰！');
+        alert('Please enter a valid 6-digit key!');
         return;
       }
 
       receiveBtn.disabled = true;
-      receiveStatus.innerText = '搜尋連線中...';
+      receiveStatus.innerText = 'Connecting...';
       receiveProgress.style.display = 'none';
-      receiveProgress.value = 0;
+      receiveSpeed.innerText = '';
 
-      const receivePeer = new Peer();
-      let fileMeta = null;
-      let receivedChunks = [];
-      let receivedSize = 0;
+      const receivePeer = new Peer({
+        config: {
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        }
+      });
+      
+      let currentFileMeta = null;
+      let fileWriteStream = null;
+      let writer = null;
+      let totalReceivedSize = 0;
+
+      let startTime = 0;
+      let lastTime = 0;
+      let lastReceived = 0;
 
       receivePeer.on('open', () => {
         const conn = receivePeer.connect(codeInput);
 
         conn.on('open', () => {
-          receiveStatus.innerText = '已連線，等待傳送資料...';
+          receiveStatus.innerText = 'Connected. Waiting for data...';
         });
 
-        conn.on('data', (data) => {
-          if (data.type === 'HEADER') {
-            fileMeta = data.meta;
+        conn.on('data', async (data) => {
+          if (data.type === 'FILE_HEADER') {
+            currentFileMeta = data;
             receiveProgress.style.display = 'block';
-            receiveStatus.innerText = '開始接收檔案...';
+
+            startTime = Date.now();
+            lastTime = startTime;
+
+            fileWriteStream = streamSaver.createWriteStream(currentFileMeta.name, {
+              size: currentFileMeta.size
+            });
+            writer = fileWriteStream.getWriter();
           } 
           else if (data.type === 'CHUNK') {
-            receivedChunks.push(data.chunk);
-            receivedSize += data.chunk.byteLength;
-            
-            const progress = Math.min(100, Math.round((receivedSize / fileMeta.size) * 100));
-            receiveProgress.value = progress;
-            receiveStatus.innerText = `接收中... ${progress}%`;
-          } 
-          else if (data.type === 'END') {
-            // 組裝檔案並觸發下載
-            receiveStatus.innerText = '組裝檔案中...';
-            const blob = new Blob(receivedChunks, { type: fileMeta.type });
-            const url = URL.createObjectURL(blob);
-            
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = fileMeta.name;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            totalReceivedSize += data.chunk.byteLength;
 
-            receiveStatus.innerText = `成功接收：${fileMeta.name}`;
+            if (writer) {
+              await writer.write(new Uint8Array(data.chunk));
+            }
+
+            const now = Date.now();
+            if (now - lastTime >= 500) {
+              const diffBytes = totalReceivedSize - lastReceived;
+              const speed = (diffBytes / ((now - lastTime) / 1000));
+              const remainingBytes = currentFileMeta.size - totalReceivedSize;
+              const etaSec = speed > 0 ? Math.ceil(remainingBytes / speed) : 0;
+
+              receiveSpeed.innerText = `Speed: ${formatSpeed(speed)} | ETA: ${etaSec}s`;
+              lastTime = now;
+              lastReceived = totalReceivedSize;
+            }
+
+            if (currentFileMeta && currentFileMeta.size > 0) {
+              const progress = Math.min(100, Math.round((totalReceivedSize / currentFileMeta.size) * 100));
+              receiveProgress.value = progress;
+              receiveStatus.innerText = `Downloading to default location... ${progress}%`;
+
+              conn.send({ type: 'PROGRESS', percent: progress });
+            }
+          } 
+          else if (data.type === 'ALL_END') {
+            if (writer) {
+              await writer.close();
+              writer = null;
+            }
+
+            receiveStatus.innerText = 'Download complete! Saved according to browser settings.';
+            receiveSpeed.innerText = '';
             receiveProgress.style.display = 'none';
             receiveBtn.disabled = false;
 
-            // 發送 ACK 讓發送端銷毀 Key，隨後斷開連線
             conn.send({ type: 'ACK' });
             setTimeout(() => receivePeer.destroy(), 1000);
           }
         });
 
         conn.on('error', () => {
-          receiveStatus.innerText = '連線中斷或 Key 無效。';
+          if (writer) writer.abort();
+          receiveStatus.innerText = 'Connection lost.';
           receiveBtn.disabled = false;
         });
       });
 
-      receivePeer.on('error', (err) => {
-        receiveStatus.innerText = '找不到此 Key 或已失效。';
+      receivePeer.on('error', () => {
+        receiveStatus.innerText = 'Key invalid or expired.';
         receiveBtn.disabled = false;
       });
     }
