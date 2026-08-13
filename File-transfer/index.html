@@ -35,7 +35,7 @@
     <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
       <p>📁 Drag & Drop files here or <strong>browse</strong></p>
       <!-- 加入 accept="*/*" 並確保無 capture 屬性，讓手機直接打開相簿/媒體庫選擇 -->
-      <input type="file" id="file-input" multiple accept="*/*" style="display: none;" onchange="handleFileSelect(this.files)" />
+      <input type="file" id="file-input" multiple accept="image/*,*/*" style="display: none;" onchange="handleFileSelect(this.files)" />
       <div class="file-list-preview" id="file-preview"></div>
     </div>
     
