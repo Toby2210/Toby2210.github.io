@@ -65,8 +65,8 @@
   </div>
 
   <script>
-    const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB
-    const MAX_BUFFERED_AMOUNT = 64 * 1024 * 1024; // 64MB
+    const CHUNK_SIZE = 2 * 1024 * 1024; // CHUNK SIZE
+    const MAX_BUFFERED_AMOUNT = 8 * 1024 * 1024; // MAX BUFFERED AMOUNT
     
     let sendPeer = null;
     let expireTimer = null;
@@ -348,33 +348,43 @@
             writer = fileWriteStream.getWriter();
           } 
           else if (data.type === 'CHUNK') {
-            totalReceivedSize += data.chunk.byteLength;
+            const chunk = data.chunk;
+            // 相容不同型別的長度計算
+            const byteLength = chunk.byteLength ?? chunk.byteLength ?? (chunk.buffer?.byteLength) ?? chunk.length ?? 0;
+            totalReceivedSize += byteLength;
 
             if (writer) {
-              await writer.write(new Uint8Array(data.chunk));
+              // 優先直接寫入，減少記憶體複製
+              if (chunk instanceof Uint8Array) {
+                await writer.write(chunk);
+              } else if (chunk instanceof ArrayBuffer) {
+                await writer.write(new Uint8Array(chunk)); // view，不複製資料
+              } else {
+                await writer.write(new Uint8Array(chunk));
+              }
             }
-
+          
             const now = Date.now();
             if (now - lastTime >= 500) {
               const diffBytes = totalReceivedSize - lastReceived;
               const speed = (diffBytes / ((now - lastTime) / 1000));
               const remainingBytes = currentFileMeta.size - totalReceivedSize;
               const etaSec = speed > 0 ? Math.ceil(remainingBytes / speed) : 0;
-
+            
               receiveSpeed.innerText = `Speed: ${formatSpeed(speed)} | ETA: ${etaSec}s`;
               lastTime = now;
               lastReceived = totalReceivedSize;
             }
-
+          
             if (currentFileMeta && currentFileMeta.size > 0) {
               const progress = Math.min(100, Math.round((totalReceivedSize / currentFileMeta.size) * 100));
               receiveProgress.value = progress;
               receiveStatus.innerText = `Downloading to default location... ${progress}%`;
-
+            
               conn.send({ type: 'PROGRESS', percent: progress });
             }
-          } 
-          else if (data.type === 'ALL_END') {
+          }
+            else if (data.type === 'ALL_END') {
             if (writer) {
               await writer.close();
               writer = null;
