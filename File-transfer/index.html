@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>P2P 快傳 (Send Anywhere 風格)</title>
+  <!-- 引入 PeerJS 與 JSZip 函式庫 -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 500px; margin: 40px auto; padding: 20px; line-height: 1.6; }
+    .card { border: 1px solid #ddd; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #e63946; text-align: center; margin: 15px 0; }
+    input[type="text"] { font-size: 20px; letter-spacing: 2px; text-align: center; width: 100%; padding: 10px; box-sizing: border-box; margin-bottom: 10px; }
+    button { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; }
+    button:disabled { background-color: #ccc; }
+    .status { font-weight: bold; color: #555; margin-top: 10px; text-align: center; }
+  </style>
+</head>
+<body>
+
+  <h2>P2P 檔案快傳</h2>
+
+  <!-- 傳送端卡片 -->
+  <div class="card">
+    <h3>1. 發送檔案</h3>
+    <input type="file" id="file-input" multiple />
+    <br><br>
+    <button id="send-btn" onclick="startSending()">產生 Key 並傳送</button>
+
+    <div id="send-area" style="display:none;">
+      <p style="text-align: center; margin-bottom: 0;">接收金鑰 (6 位數字)：</p>
+      <div class="code-display" id="passkey-display">------</div>
+      <p style="font-size: 13px; color: #666; text-align: center;">請保持此網頁開啟，直到接收端下載完成。</p>
+    </div>
+    <div class="status" id="send-status"></div>
+  </div>
+
+  <!-- 接收端卡片 -->
+  <div class="card">
+    <h3>2. 接收檔案</h3>
+    <input type="text" id="receive-code" placeholder="輸入 6 位數字 Key" maxlength="6" />
+    <button onclick="startReceiving()">接收檔案</button>
+    <div class="status" id="receive-status"></div>
+  </div>
+
+  <script>
+    let sendPeer = null;
+    let preparedPayload = null; // 存放已準備好（或已 Zip 化）的檔案數據
+
+    // 隨機產生 6 位數字 (100000 - 999999)
+    function generate6DigitCode() {
+      return Math.floor(100000 + Math.random() * 900000).toString();
+    }
+
+    // --- 發送端邏輯 ---
+    async function startSending() {
+      const fileInput = document.getElementById('file-input');
+      const files = fileInput.files;
+
+      if (files.length === 0) {
+        alert('請先選取至少一個檔案！');
+        return;
+      }
+
+      const sendBtn = document.getElementById('send-btn');
+      const sendStatus = document.getElementById('send-status');
+      sendBtn.disabled = true;
+
+      // 1. 如果選取多於 1 個檔案，進行打包 Zip
+      if (files.length > 1) {
+        sendStatus.innerText = '正在將多個檔案壓縮為 ZIP...';
+        const zip = new JSZip();
+        for (let i = 0; i < files.length; i++) {
+          zip.file(files[i].name, files[i]);
+        }
+        // 壓成 Blob
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        preparedPayload = {
+          file: zipBlob,
+          name: `archive_${Date.now()}.zip`,
+          type: 'application/zip',
+          size: zipBlob.size
+        };
+      } else {
+        // 單一檔案直傳
+        const file = files[0];
+        preparedPayload = {
+          file: file,
+          name: file.name,
+          type: file.type,
+          size: file.size
+        };
+      }
+
+      // 2. 產生 6 位數作為 Peer ID 並初始化 Peer
+      const passkey = generate6DigitCode();
+      
+      // 如果之前建立過連線，先銷毀
+      if (sendPeer) sendPeer.destroy();
+
+      sendStatus.innerText = '正在連線至信令伺服器...';
+      sendPeer = new Peer(passkey);
+
+      sendPeer.on('open', (id) => {
+        document.getElementById('passkey-display').innerText = id;
+        document.getElementById('send-area').style.display = 'block';
+        sendStatus.innerText = '等待對方輸入 Key 連線...';
+      });
+
+      sendPeer.on('error', (err) => {
+        // 若隨機 ID 碰撞（極少發生），重新嘗試
+        if (err.type === 'unavailable-id') {
+          startSending();
+        } else {
+          sendStatus.innerText = '發生錯誤: ' + err.message;
+          sendBtn.disabled = false;
+        }
+      });
+
+      // 3. 聽取接收端的連線要求，一連上就發送檔案
+      sendPeer.on('connection', (conn) => {
+        sendStatus.innerText = '接收端已連線，發送檔案中...';
+        conn.on('open', () => {
+          conn.send(preparedPayload);
+          sendStatus.innerText = '檔案發送成功！';
+          sendBtn.disabled = false;
+        });
+      });
+    }
+
+    // --- 接收端邏輯 ---
+    function startReceiving() {
+      const codeInput = document.getElementById('receive-code').value.trim();
+      const receiveStatus = document.getElementById('receive-status');
+
+      if (codeInput.length !== 6 || isNaN(codeInput)) {
+        alert('請輸入正確的 6 位數字金鑰！');
+        return;
+      }
+
+      receiveStatus.innerText = '搜尋並連線中...';
+
+      // 接收端使用隨機 Peer ID 即可
+      const receivePeer = new Peer();
+
+      receivePeer.on('open', () => {
+        // 連接到傳送端設定的 6 位數 Key
+        const conn = receivePeer.connect(codeInput);
+
+        conn.on('open', () => {
+          receiveStatus.innerText = '已連線，等待接收檔案...';
+        });
+
+        // 收到檔案數據
+        conn.on('data', (data) => {
+          receiveStatus.innerText = '接收完成！正在觸發下載...';
+
+          const blob = new Blob([data.file], { type: data.type });
+          const url = URL.createObjectURL(blob);
+          
+          // 自動觸發瀏覽器下載
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = data.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+
+          receiveStatus.innerText = `成功接收：${data.name}`;
+          
+          // 下載完後可關閉此 Peer 節省資源
+          setTimeout(() => receivePeer.destroy(), 2000);
+        });
+
+        conn.on('error', (err) => {
+          receiveStatus.innerText = '連線失敗或 Key 無效。';
+        });
+      });
+
+      receivePeer.on('error', (err) => {
+        receiveStatus.innerText = '無法建立接收端連線：' + err.message;
+      });
+    }
+  </script>
+</body>
+</html>
