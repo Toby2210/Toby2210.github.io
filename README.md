@@ -6,6 +6,9 @@ A utility for generating test files for development and testing purposes.
 ### [P2P Fast Transfer](File-transfer/index.html)
 Transfer files directly between browsers using peer-to-peer connection. Generate a 6-digit code to send files or enter a code to receive files. Supports drag & drop, ZIP packaging for multiple files, and real-time speed monitoring.
 
+### [Device Inspector](Device-inspector/index.html)
+Inspect the current browsing device. Detects the device model (iPhone, Windows PC, Mac, Samsung Galaxy...), operating system (Windows 11, macOS, iOS, Android...), and actual screen size (physical resolution, not the browser viewport). Includes a one-click copy button to copy all device info.
+
 ### [Image Merger Tool (Table Mode)](Image_Merger_Tool_Table_Mode/index.html)
 Combine multiple images into a single table layout with customizable options.
 
