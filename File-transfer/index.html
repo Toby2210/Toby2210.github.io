@@ -8,8 +8,18 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/streamsaver@2.0.6/StreamSaver.min.js"></script>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 500px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #333; }
-    .card { border: 1px solid #ddd; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; line-height: 1.6; color: #333; }
+    .page-header { max-width: 1400px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .page-header h2 { margin: 0; }
+    .sessions { display: grid; grid-template-columns: 1fr; gap: 20px; max-width: 1400px; margin: 0 auto; }
+    .session { position: relative; min-width: 0; }
+    .session-card { border: 1px solid #ddd; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); background: #fff; }
+    .session-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+    .section-title { font-size: 14px; margin: 0; }
+    .close-btn { width: auto; border: none; background: transparent; color: #999; font-size: 20px; line-height: 1; cursor: pointer; padding: 2px 8px; border-radius: 6px; }
+    .close-btn:hover { background: #fdecec; color: #e63946; }
+    .close-btn:disabled { background: transparent; color: #ccc; cursor: not-allowed; }
+    .close-btn:disabled:hover { background: transparent; }
     .drop-zone { border: 2px dashed #007bff; border-radius: 8px; padding: 25px; text-align: center; color: #666; cursor: pointer; transition: background 0.2s, border-color 0.2s; background: #f8f9fa; }
     .drop-zone.dragover { background: #e9f2ff; border-color: #0056b3; color: #0056b3; }
     .drop-zone p { margin: 0; font-size: 14px; }
@@ -19,103 +29,39 @@
     input[type="text"] { font-size: 20px; letter-spacing: 2px; text-align: center; width: 100%; padding: 10px; box-sizing: border-box; margin-bottom: 10px; }
     button { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: 600; }
     button:disabled { background-color: #ccc; cursor: not-allowed; }
-    .status { font-weight: bold; color: #555; margin-top: 10px; text-align: center; word-break: break-all; }
+    .status { font-weight: bold; color: #555; margin-top: 10px; text-align: center; word-break: break-all; min-height: 3.2em; }
     .speed-info { font-size: 13px; color: #007bff; text-align: center; margin-top: 5px; font-weight: bold; }
     progress { width: 100%; height: 20px; margin-top: 10px; display: none; }
+    .add-session-btn { min-height: 120px; border: 2px dashed #007bff; border-radius: 12px; background: #f8f9fa; color: #007bff; font-size: 40px; font-weight: 300; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; transition: background 0.2s, color 0.2s; }
+    .add-session-btn span { font-size: 14px; font-weight: 600; }
+    .add-session-btn:hover { background: #e9f2ff; color: #0056b3; }
+    @media (min-width: 600px) {
+      .sessions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (min-width: 900px) {
+      .sessions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (min-width: 1200px) {
+      .sessions { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    }
   </style>
 </head>
 <body>
 
-  <h2>P2P Fast Transfer</h2>
-
-  <!-- Sender -->
-  <div class="card">
-    <h3>1. Send Files</h3>
-    
-    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
-      <p>📁 Drag & Drop files here or <strong>browse</strong></p>
-      <!-- 加入 accept="*/*" 並確保無 capture 屬性，讓手機直接打開相簿/媒體庫選擇 -->
-      <input type="file" id="file-input" multiple accept="*/*" style="display: none;" onchange="handleFileSelect(this.files)" />
-      <div class="file-list-preview" id="file-preview"></div>
-    </div>
-    
-    <br>
-    <button id="send-btn" onclick="startSending()">Generate Code & Send</button>
-
-    <div id="send-area" style="display:none;">
-      <p style="text-align: center; margin-bottom: 0;">Receive Key (6 Digits):</p>
-      <div class="code-display" id="passkey-display">------</div>
-      <div class="timer" id="timer-display">Expires in: 10:00</div>
-    </div>
-    
-    <progress id="send-progress" value="0" max="100"></progress>
-    <div class="speed-info" id="send-speed"></div>
-    <div class="status" id="send-status"></div>
+  <div class="page-header">
+    <h2>P2P Fast Transfer</h2>
   </div>
 
-  <!-- Receiver -->
-  <div class="card">
-    <h3>2. Receive Files</h3>
-    <input type="text" id="receive-code" placeholder="Enter 6-digit Key" maxlength="6" />
-    <button id="receive-btn" onclick="startReceiving()">Receive Files</button>
-    
-    <progress id="receive-progress" value="0" max="100"></progress>
-    <div class="speed-info" id="receive-speed"></div>
-    <div class="status" id="receive-status"></div>
+  <div class="sessions" id="sessions">
+    <button class="add-session-btn" id="add-tile" onclick="addSession()">+<span>New Session</span></button>
   </div>
 
   <script>
     const CHUNK_SIZE = 2 * 1024 * 1024; // CHUNK SIZE
     const MAX_BUFFERED_AMOUNT = 8 * 1024 * 1024; // MAX BUFFERED AMOUNT
-    
-    let sendPeer = null;
-    let expireTimer = null;
-    let countdownInterval = null;
-    let selectedFiles = [];
+    const KEY_TTL_SECONDS = 10 * 60;
 
-    // Setup Enter Key Trigger for Code Input
-    document.getElementById('receive-code').addEventListener('keydown', function(event) {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        startReceiving();
-      }
-    });
-
-    // Drag & Drop Handlers
-    const dropZone = document.getElementById('drop-zone');
-    
-    ['dragenter', 'dragover'].forEach(eventName => {
-      dropZone.addEventListener(eventName, (e) => {
-        e.preventDefault();
-        dropZone.classList.add('dragover');
-      }, false);
-    });
-
-    ['dragleave', 'drop'].forEach(eventName => {
-      dropZone.addEventListener(eventName, (e) => {
-        e.preventDefault();
-        dropZone.classList.remove('dragover');
-      }, false);
-    });
-
-    dropZone.addEventListener('drop', (e) => {
-      const dt = e.dataTransfer;
-      if (dt.files && dt.files.length > 0) {
-        handleFileSelect(dt.files);
-      }
-    });
-
-    function handleFileSelect(files) {
-      selectedFiles = Array.from(files);
-      const preview = document.getElementById('file-preview');
-      if (selectedFiles.length === 1) {
-        preview.innerText = `Selected: ${selectedFiles[0].name}`;
-      } else if (selectedFiles.length > 1) {
-        preview.innerText = `Selected ${selectedFiles.length} files (${selectedFiles.map(f => f.name).join(', ')})`;
-      } else {
-        preview.innerText = '';
-      }
-    }
+    let sessionCounter = 0;
 
     function generate6DigitCode() {
       return Math.floor(100000 + Math.random() * 900000).toString();
@@ -126,58 +72,202 @@
       return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
     }
 
-    function cleanupSendState(message = '') {
-      if (expireTimer) clearTimeout(expireTimer);
-      if (countdownInterval) clearInterval(countdownInterval);
-      if (sendPeer) {
-        sendPeer.destroy();
-        sendPeer = null;
+    // --- Session management ---
+    function addSession() {
+      sessionCounter++;
+      const n = sessionCounter;
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'session';
+      wrapper.innerHTML = `
+        <div class="session-card">
+          <!-- Sender -->
+          <div class="session-header">
+            <h3 class="section-title">1. Send Files</h3>
+            <button class="close-btn" id="close-btn-${n}" title="Close session" onclick="closeSession(${n})">×</button>
+          </div>
+          <div class="drop-zone" onclick="document.getElementById('file-input-${n}').click()">
+            <p>📁 Drag & Drop files here or <strong>browse</strong></p>
+            <input type="file" id="file-input-${n}" multiple accept="*/*" style="display: none;" onchange="handleFileSelect(${n}, this.files)" />
+            <div class="file-list-preview" id="file-preview-${n}"></div>
+          </div>
+          <br>
+          <button id="send-btn-${n}" onclick="startSending(${n})">Generate Code & Send</button>
+
+          <div id="send-area-${n}" style="display:none;">
+            <p style="text-align: center; margin-bottom: 0;">Receive Key (6 Digits):</p>
+            <div class="code-display" id="passkey-display-${n}">------</div>
+            <div class="timer" id="timer-display-${n}">Expires in: 10:00</div>
+          </div>
+
+          <progress id="send-progress-${n}" value="0" max="100"></progress>
+          <div class="speed-info" id="send-speed-${n}"></div>
+          <div class="status" id="send-status-${n}"></div>
+
+          <!-- Receiver -->
+          <h3 style="font-size: 14px; margin: 18px 0 10px;">2. Receive Files</h3>
+          <input type="text" id="receive-code-${n}" placeholder="Enter 6-digit Key" maxlength="6" />
+          <button id="receive-btn-${n}" onclick="startReceiving(${n})">Receive Files</button>
+
+          <progress id="receive-progress-${n}" value="0" max="100"></progress>
+          <div class="speed-info" id="receive-speed-${n}"></div>
+          <div class="status" id="receive-status-${n}"></div>
+        </div>
+      `;
+
+      const sessionsEl = document.getElementById('sessions');
+      const addTile = document.getElementById('add-tile');
+      sessionsEl.insertBefore(wrapper, addTile);
+
+      // Per-session state
+      const session = {
+        n,
+        wrapper,
+        selectedFiles: [],
+        sendPeer: null,
+        receivePeer: null,
+        expireTimer: null,
+        countdownInterval: null,
+        sendActive: false
+      };
+      sessions.set(n, session);
+
+      // Drag & Drop Handlers
+      const dropZone = wrapper.querySelector('.drop-zone');
+      ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          dropZone.classList.add('dragover');
+        }, false);
+      });
+      ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          dropZone.classList.remove('dragover');
+        }, false);
+      });
+      dropZone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        if (dt.files && dt.files.length > 0) {
+          handleFileSelect(n, dt.files);
+        }
+      });
+
+      // Enter Key Trigger for Code Input
+      wrapper.querySelector(`#receive-code-${n}`).addEventListener('keydown', function(event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          startReceiving(n);
+        }
+      });
+
+      return session;
+    }
+
+    const sessions = new Map();
+
+    function closeSession(n) {
+      const session = sessions.get(n);
+      if (!session) return;
+      if (session.sendActive) {
+        alert('Cannot close: a transfer key is active. Wait for the transfer to complete or the key to expire.');
+        return;
       }
-      selectedFiles = [];
-      document.getElementById('send-area').style.display = 'none';
-      document.getElementById('send-btn').disabled = false;
-      document.getElementById('file-input').value = '';
-      document.getElementById('file-preview').innerText = '';
-      document.getElementById('send-speed').innerText = '';
-      if (message) document.getElementById('send-status').innerText = message;
+      cleanupSession(session);
+      sessions.delete(n);
+      session.wrapper.remove();
+    }
+
+    function cleanupSession(session) {
+      const { n } = session;
+      if (session.expireTimer) clearTimeout(session.expireTimer);
+      if (session.countdownInterval) clearInterval(session.countdownInterval);
+      if (session.sendPeer) {
+        session.sendPeer.destroy();
+        session.sendPeer = null;
+      }
+      if (session.receivePeer) {
+        session.receivePeer.destroy();
+        session.receivePeer = null;
+      }
+      session.selectedFiles = [];
+    }
+
+    function handleFileSelect(n, files) {
+      const session = sessions.get(n);
+      if (!session) return;
+      session.selectedFiles = Array.from(files);
+      const preview = document.getElementById(`file-preview-${n}`);
+      if (session.selectedFiles.length === 1) {
+        preview.innerText = `Selected: ${session.selectedFiles[0].name}`;
+      } else if (session.selectedFiles.length > 1) {
+        preview.innerText = `Selected ${session.selectedFiles.length} files (${session.selectedFiles.map(f => f.name).join(', ')})`;
+      } else {
+        preview.innerText = '';
+      }
+    }
+
+    function cleanupSendState(session, message = '') {
+      const { n } = session;
+      if (session.expireTimer) clearTimeout(session.expireTimer);
+      if (session.countdownInterval) clearInterval(session.countdownInterval);
+      if (session.sendPeer) {
+        session.sendPeer.destroy();
+        session.sendPeer = null;
+      }
+      session.selectedFiles = [];
+      session.sendActive = false;
+      const closeBtn = document.getElementById(`close-btn-${n}`);
+      if (closeBtn) closeBtn.disabled = false;
+      document.getElementById(`send-area-${n}`).style.display = 'none';
+      document.getElementById(`send-btn-${n}`).disabled = false;
+      document.getElementById(`file-input-${n}`).value = '';
+      document.getElementById(`file-preview-${n}`).innerText = '';
+      document.getElementById(`send-speed-${n}`).innerText = '';
+      if (message) document.getElementById(`send-status-${n}`).innerText = message;
     }
 
     // --- Sender ---
-    async function startSending() {
-      if (selectedFiles.length === 0) {
+    async function startSending(n) {
+      const session = sessions.get(n);
+      if (!session) return;
+      if (session.selectedFiles.length === 0) {
         alert('Please select or drop at least one file!');
         return;
       }
 
-      const files = [...selectedFiles];
-      const sendBtn = document.getElementById('send-btn');
-      const sendStatus = document.getElementById('send-status');
-      const sendProgress = document.getElementById('send-progress');
-      const sendSpeed = document.getElementById('send-speed');
-      
+      const files = [...session.selectedFiles];
+      const sendBtn = document.getElementById(`send-btn-${n}`);
+      const sendStatus = document.getElementById(`send-status-${n}`);
+      const sendProgress = document.getElementById(`send-progress-${n}`);
+      const sendSpeed = document.getElementById(`send-speed-${n}`);
+
       sendBtn.disabled = true;
       sendSpeed.innerText = '';
 
       const passkey = generate6DigitCode();
-      if (sendPeer) sendPeer.destroy();
+      if (session.sendPeer) session.sendPeer.destroy();
 
-      sendPeer = new Peer(passkey, {
+      session.sendPeer = new Peer(passkey, {
         config: {
           iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
         }
       });
 
-      sendPeer.on('open', (id) => {
-        document.getElementById('passkey-display').innerText = id;
-        document.getElementById('send-area').style.display = 'block';
-        startTimer(10 * 60);
+      session.sendPeer.on('open', (id) => {
+        document.getElementById(`passkey-display-${n}`).innerText = id;
+        document.getElementById(`send-area-${n}`).style.display = 'block';
+        session.sendActive = true;
+        const closeBtn = document.getElementById(`close-btn-${n}`);
+        if (closeBtn) closeBtn.disabled = true;
+        startTimer(session, KEY_TTL_SECONDS);
       });
 
-      sendPeer.on('error', (err) => {
+      session.sendPeer.on('error', (err) => {
         if (err.type === 'unavailable-id') {
-          startSending();
+          startSending(n);
         } else {
-          cleanupSendState('Connection error: ' + err.message);
+          cleanupSendState(session, 'Connection error: ' + err.message);
         }
       });
 
@@ -213,10 +303,10 @@
         }
       })();
 
-      sendPeer.on('connection', (conn) => {
-        if (expireTimer) clearTimeout(expireTimer);
-        if (countdownInterval) clearInterval(countdownInterval);
-        
+      session.sendPeer.on('connection', (conn) => {
+        if (session.expireTimer) clearTimeout(session.expireTimer);
+        if (session.countdownInterval) clearInterval(session.countdownInterval);
+
         conn.on('open', async () => {
           sendStatus.innerText = 'Confirming file package...';
           fileToSend = await prepareFilePromise;
@@ -241,7 +331,7 @@
             const slice = fileToSend.slice(offset, offset + CHUNK_SIZE);
             const buffer = await slice.arrayBuffer();
             conn.send({ type: 'CHUNK', chunk: buffer });
-            
+
             offset += CHUNK_SIZE;
 
             const now = Date.now();
@@ -269,38 +359,41 @@
           else if (data.type === 'ACK') {
             sendProgress.value = 100;
             sendProgress.style.display = 'none';
-            cleanupSendState('Transfer complete! Key destroyed.');
+            cleanupSendState(session, 'Transfer complete! Key destroyed.');
           }
         });
       });
     }
 
-    function startTimer(seconds) {
+    function startTimer(session, seconds) {
+      const { n } = session;
       let timeLeft = seconds;
-      const timerDisplay = document.getElementById('timer-display');
-      if (expireTimer) clearTimeout(expireTimer);
-      if (countdownInterval) clearInterval(countdownInterval);
+      const timerDisplay = document.getElementById(`timer-display-${n}`);
+      if (session.expireTimer) clearTimeout(session.expireTimer);
+      if (session.countdownInterval) clearInterval(session.countdownInterval);
 
-      countdownInterval = setInterval(() => {
+      session.countdownInterval = setInterval(() => {
         timeLeft--;
         const mins = Math.floor(timeLeft / 60).toString().padStart(2, '0');
         const secs = (timeLeft % 60).toString().padStart(2, '0');
         timerDisplay.innerText = `Expires in: ${mins}:${secs}`;
-        if (timeLeft <= 0) clearInterval(countdownInterval);
+        if (timeLeft <= 0) clearInterval(session.countdownInterval);
       }, 1000);
 
-      expireTimer = setTimeout(() => {
-        cleanupSendState('Key expired (10 minutes elapsed).');
+      session.expireTimer = setTimeout(() => {
+        cleanupSendState(session, 'Key expired (10 minutes elapsed).');
       }, seconds * 1000);
     }
 
     // --- Receiver ---
-    function startReceiving() {
-      const codeInput = document.getElementById('receive-code').value.trim();
-      const receiveStatus = document.getElementById('receive-status');
-      const receiveProgress = document.getElementById('receive-progress');
-      const receiveSpeed = document.getElementById('receive-speed');
-      const receiveBtn = document.getElementById('receive-btn');
+    function startReceiving(n) {
+      const session = sessions.get(n);
+      if (!session) return;
+      const codeInput = document.getElementById(`receive-code-${n}`).value.trim();
+      const receiveStatus = document.getElementById(`receive-status-${n}`);
+      const receiveProgress = document.getElementById(`receive-progress-${n}`);
+      const receiveSpeed = document.getElementById(`receive-speed-${n}`);
+      const receiveBtn = document.getElementById(`receive-btn-${n}`);
 
       if (codeInput.length !== 6 || isNaN(codeInput)) {
         alert('Please enter a valid 6-digit key!');
@@ -312,12 +405,14 @@
       receiveProgress.style.display = 'none';
       receiveSpeed.innerText = '';
 
+      if (session.receivePeer) session.receivePeer.destroy();
       const receivePeer = new Peer({
         config: {
           iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
         }
       });
-      
+      session.receivePeer = receivePeer;
+
       let currentFileMeta = null;
       let fileWriteStream = null;
       let writer = null;
@@ -346,7 +441,7 @@
               size: currentFileMeta.size
             });
             writer = fileWriteStream.getWriter();
-          } 
+          }
           else if (data.type === 'CHUNK') {
             const chunk = data.chunk;
             // 相容不同型別的長度計算
@@ -363,28 +458,28 @@
                 await writer.write(new Uint8Array(chunk));
               }
             }
-          
+
             const now = Date.now();
             if (now - lastTime >= 500) {
               const diffBytes = totalReceivedSize - lastReceived;
               const speed = (diffBytes / ((now - lastTime) / 1000));
               const remainingBytes = currentFileMeta.size - totalReceivedSize;
               const etaSec = speed > 0 ? Math.ceil(remainingBytes / speed) : 0;
-            
+
               receiveSpeed.innerText = `Speed: ${formatSpeed(speed)} | ETA: ${etaSec}s`;
               lastTime = now;
               lastReceived = totalReceivedSize;
             }
-          
+
             if (currentFileMeta && currentFileMeta.size > 0) {
               const progress = Math.min(100, Math.round((totalReceivedSize / currentFileMeta.size) * 100));
               receiveProgress.value = progress;
               receiveStatus.innerText = `Downloading to default location... ${progress}%`;
-            
+
               conn.send({ type: 'PROGRESS', percent: progress });
             }
           }
-            else if (data.type === 'ALL_END') {
+          else if (data.type === 'ALL_END') {
             if (writer) {
               await writer.close();
               writer = null;
@@ -394,9 +489,15 @@
             receiveSpeed.innerText = '';
             receiveProgress.style.display = 'none';
             receiveBtn.disabled = false;
+            document.getElementById(`receive-code-${n}`).value = '';
 
             conn.send({ type: 'ACK' });
-            setTimeout(() => receivePeer.destroy(), 1000);
+            setTimeout(() => {
+              if (session.receivePeer === receivePeer) {
+                session.receivePeer = null;
+              }
+              receivePeer.destroy();
+            }, 1000);
           }
         });
 
@@ -412,6 +513,10 @@
         receiveBtn.disabled = false;
       });
     }
+
+    // Initialize with one session
+    const INITIAL_SESSIONS = 1;
+    for (let i = 0; i < INITIAL_SESSIONS; i++) addSession();
   </script>
 </body>
 </html>
