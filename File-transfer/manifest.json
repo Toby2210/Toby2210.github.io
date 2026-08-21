@@ -1,0 +1,17 @@
+{
+  "name": "P2P Fast Transfer",
+  "short_name": "P2P Transfer",
+  "description": "Peer-to-peer file transfer with 6-digit keys",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#007bff",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
