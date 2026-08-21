@@ -64,10 +64,10 @@
   </div>
 
   <script>
-    const CHUNK_SIZE = 4 * 1024 * 1024; // CHUNK SIZE
-    const MAX_BUFFERED_AMOUNT = 12 * 1024 * 1024; // MAX BUFFERED AMOUNT
+    const CHUNK_SIZE = 1 * 1024 * 1024; // CHUNK SIZE
+    const MAX_BUFFERED_AMOUNT = 6 * 1024 * 1024; // MAX BUFFERED AMOUNT
     const KEY_TTL_SECONDS = 10 * 60;
-    const LOW_WATER_MARK = 2 * 1024 * 1024;      // 2 MB low water mark（resume 發送）
+    const LOW_WATER_MARK = 1.5 * 1024 * 1024;      // 2 MB low water mark（resume 發送）
 
     let sessionCounter = 0;
 
@@ -504,13 +504,13 @@
               const progress = Math.min(100, Math.round((totalReceivedSize / currentFileMeta.size) * 100));
               receiveProgress.value = progress;
               receiveStatus.innerText = `Downloading to default location... ${progress}%`;
-                        
+
               // 大幅減少進度回報：每增加 2% 或每 500ms 先回一次（最後 100% 一定回）
               const shouldSendProgress =
                 progress === 100 ||
                 progress - lastProgressPercent >= 2 ||
                 (now - lastProgressSentTime >= 500 && progress !== lastProgressPercent);
-                        
+
               if (shouldSendProgress) {
                 conn.send({ type: 'PROGRESS', percent: progress });
                 lastProgressPercent = progress;
