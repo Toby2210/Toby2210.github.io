@@ -64,9 +64,10 @@
   </div>
 
   <script>
-    const CHUNK_SIZE = 2 * 1024 * 1024; // CHUNK SIZE
-    const MAX_BUFFERED_AMOUNT = 8 * 1024 * 1024; // MAX BUFFERED AMOUNT
+    const CHUNK_SIZE = 4 * 1024 * 1024; // CHUNK SIZE
+    const MAX_BUFFERED_AMOUNT = 12 * 1024 * 1024; // MAX BUFFERED AMOUNT
     const KEY_TTL_SECONDS = 10 * 60;
+    const LOW_WATER_MARK = 2 * 1024 * 1024;      // 2 MB low water mark（resume 發送）
 
     let sessionCounter = 0;
 
@@ -329,33 +330,50 @@
             fileType: fileToSend.type
           });
 
+          // 正確的 flow control：用 bufferedamountlow 事件，唔再 setTimeout 輪詢
+          if (conn.dataChannel) {
+            conn.dataChannel.bufferedAmountLowThreshold = LOW_WATER_MARK;
+          }
+
           let offset = 0;
           let startTime = Date.now();
           let lastTime = startTime;
           let lastOffset = 0;
 
-          while (offset < fileToSend.size) {
-            const slice = fileToSend.slice(offset, offset + CHUNK_SIZE);
-            const buffer = await slice.arrayBuffer();
-            conn.send({ type: 'CHUNK', chunk: buffer });
-
-            offset += CHUNK_SIZE;
-
-            const now = Date.now();
-            if (now - lastTime >= 500) {
-              const bytesSent = Math.min(offset, fileToSend.size) - lastOffset;
-              const speed = (bytesSent / ((now - lastTime) / 1000));
-              sendSpeed.innerText = `Speed: ${formatSpeed(speed)}`;
-              lastTime = now;
-              lastOffset = Math.min(offset, fileToSend.size);
+          const sendNextChunk = async () => {
+            while (offset < fileToSend.size) {
+              // 當 buffer 超過 high water mark 就等 low water 事件
+              if (conn.dataChannel && conn.dataChannel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+                await new Promise(resolve => {
+                  const onLow = () => {
+                    conn.dataChannel.removeEventListener('bufferedamountlow', onLow);
+                    resolve();
+                  };
+                  conn.dataChannel.addEventListener('bufferedamountlow', onLow);
+                });
+              }
+            
+              const end = Math.min(offset + CHUNK_SIZE, fileToSend.size);
+              const slice = fileToSend.slice(offset, end);
+              const buffer = await slice.arrayBuffer();
+              conn.send({ type: 'CHUNK', chunk: buffer });
+              offset = end;
+            
+              // 每 400ms 更新一次速度顯示
+              const now = Date.now();
+              if (now - lastTime >= 400) {
+                const bytesSent = offset - lastOffset;
+                const speed = bytesSent / ((now - lastTime) / 1000);
+                sendSpeed.innerText = `Speed: ${formatSpeed(speed)}`;
+                lastTime = now;
+                lastOffset = offset;
+              }
             }
+          
+            conn.send({ type: 'ALL_END' });
+          };
 
-            while (conn.dataChannel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
-              await new Promise(r => setTimeout(r, 1));
-            }
-          }
-
-          conn.send({ type: 'ALL_END' });
+          sendNextChunk();
         });
 
         conn.on('data', (data) => {
@@ -428,6 +446,8 @@
       let startTime = 0;
       let lastTime = 0;
       let lastReceived = 0;
+      let lastProgressPercent = -1;   // 用來大幅減少 PROGRESS 回報
+      let lastProgressSentTime = 0;
 
       receivePeer.on('open', () => {
         const conn = receivePeer.connect(codeInput);
@@ -443,6 +463,8 @@
 
             startTime = Date.now();
             lastTime = startTime;
+            lastProgressPercent = -1;
+            lastProgressSentTime = 0;
 
             fileWriteStream = streamSaver.createWriteStream(currentFileMeta.name, {
               size: currentFileMeta.size
@@ -482,8 +504,18 @@
               const progress = Math.min(100, Math.round((totalReceivedSize / currentFileMeta.size) * 100));
               receiveProgress.value = progress;
               receiveStatus.innerText = `Downloading to default location... ${progress}%`;
-
-              conn.send({ type: 'PROGRESS', percent: progress });
+                        
+              // 大幅減少進度回報：每增加 2% 或每 500ms 先回一次（最後 100% 一定回）
+              const shouldSendProgress =
+                progress === 100 ||
+                progress - lastProgressPercent >= 2 ||
+                (now - lastProgressSentTime >= 500 && progress !== lastProgressPercent);
+                        
+              if (shouldSendProgress) {
+                conn.send({ type: 'PROGRESS', percent: progress });
+                lastProgressPercent = progress;
+                lastProgressSentTime = now;
+              }
             }
           }
           else if (data.type === 'ALL_END') {
