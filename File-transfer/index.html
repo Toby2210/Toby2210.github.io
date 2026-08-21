@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>P2P Fast Transfer</title>
+  <meta name="version" content="1.0.1">
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="manifest" href="manifest.json">
@@ -33,7 +34,7 @@
     .file-list-preview { margin-top: 10px; font-size: 13px; color: #555; text-align: left; word-break: break-all; max-height: 80px; overflow-y: auto; }
     .code-display { font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #e63946; text-align: center; margin: 10px 0; }
     .timer { text-align: center; color: #d90429; font-weight: bold; font-size: 14px; margin-bottom: 10px; }
-    input[type="text"] { font-size: 20px; letter-spacing: 2px; text-align: center; width: 100%; padding: 10px; box-sizing: border-box; margin-bottom: 10px; }
+    input[type="tel"] { font-size: 20px; letter-spacing: 2px; text-align: center; width: 100%; padding: 10px; box-sizing: border-box; margin-bottom: 10px; }
     button { width: 100%; padding: 12px; background-color: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: 600; }
     button:disabled { background-color: #ccc; cursor: not-allowed; }
     .status { font-weight: bold; color: #555; margin-top: 10px; text-align: center; word-break: break-all; min-height: 3.2em; }
@@ -114,7 +115,7 @@
 
           <!-- Receiver -->
           <h3 style="font-size: 14px; margin: 18px 0 10px;">2. Receive Files</h3>
-          <input type="text" id="receive-code-${n}" placeholder="Enter 6-digit Key" maxlength="6" />
+          <input type="tel" inputmode="numeric" pattern="[0-9]*" autocomplete="off" id="receive-code-${n}" placeholder="Enter 6-digit Key" maxlength="6" />
           <button id="receive-btn-${n}" onclick="startReceiving(${n})">Receive Files</button>
 
           <progress id="receive-progress-${n}" value="0" max="100"></progress>
@@ -167,6 +168,11 @@
           event.preventDefault();
           startReceiving(n);
         }
+      });
+
+      // Numbers-only filter for Code Input (blocks letters/symbols from keyboard or paste)
+      wrapper.querySelector(`#receive-code-${n}`).addEventListener('input', function() {
+        this.value = this.value.replace(/[^0-9]/g, '');
       });
 
       return session;
