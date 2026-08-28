@@ -58,6 +58,9 @@ Receive and decode QR codes directly in your browser.
 ### [Video Cutter Tool](video-cutter-tool/index.html)
 Cut and trim video files directly in your browser.
 
+### [PDF Tools](pdf-tools/index.html)
+Merge, split, and compress PDF files directly in your browser. Supports drag-and-drop, custom page ranges, and local-only processing.
+
 ---
 
 *Built with HTML, CSS, and JavaScript*

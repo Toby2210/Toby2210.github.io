@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Merge, split, and compress PDF files directly in your browser. All processing is local — your files never leave your device.">
+  <title>PDF Tools | Merge, Split & Compress</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header class="page-header">
+      <div>
+        <h1>PDF Tools</h1>
+        <p class="subtitle">Merge, split, and compress PDFs in your browser</p>
+      </div>
+      <span class="privacy-badge">Processed locally</span>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="merge" role="tab" aria-selected="true">Merge</button>
+      <button class="tab" data-tab="split" role="tab" aria-selected="false">Split</button>
+      <button class="tab" data-tab="compress" role="tab" aria-selected="false">Compress</button>
+    </nav>
+
+    <!-- Merge Panel -->
+    <section id="panel-merge" class="panel active" role="tabpanel">
+      <div class="card">
+        <div class="drop-zone" id="mergeDropZone">
+          <p>Drag &amp; drop PDF files here, or click to browse</p>
+          <input type="file" id="mergeFileInput" accept="application/pdf,.pdf" multiple hidden>
+        </div>
+        <p class="hint" id="mergeHint">Add at least 2 PDF files to merge.</p>
+        <ul id="mergeFileList" class="file-list"></ul>
+        <button id="mergeButton" class="primary-btn" disabled>Merge PDFs</button>
+      </div>
+    </section>
+
+    <!-- Split Panel -->
+    <section id="panel-split" class="panel" role="tabpanel" hidden>
+      <div class="card">
+        <div class="drop-zone" id="splitDropZone">
+          <p>Drag &amp; drop a PDF here, or click to browse</p>
+          <input type="file" id="splitFileInput" accept="application/pdf,.pdf" hidden>
+        </div>
+        <div id="splitFileInfo" class="file-info hidden"></div>
+
+        <label class="field-label">Split mode</label>
+        <div class="radio-group">
+          <label><input type="radio" name="splitMode" value="every" checked> Every page (separate PDF per page)</label>
+          <label><input type="radio" name="splitMode" value="custom"> Custom page ranges</label>
+        </div>
+
+        <div id="splitCustomGroup" class="hidden">
+          <label class="field-label" for="splitRanges">Page ranges</label>
+          <input type="text" id="splitRanges" placeholder="e.g. 1-3, 5, 7-10">
+          <p class="hint">Each comma-separated group becomes a separate output file.</p>
+        </div>
+
+        <button id="splitButton" class="primary-btn" disabled>Split PDF</button>
+      </div>
+    </section>
+
+    <!-- Compress Panel -->
+    <section id="panel-compress" class="panel" role="tabpanel" hidden>
+      <div class="card">
+        <div class="drop-zone" id="compressDropZone">
+          <p>Drag &amp; drop a PDF here, or click to browse</p>
+          <input type="file" id="compressFileInput" accept="application/pdf,.pdf" hidden>
+        </div>
+        <div id="compressFileInfo" class="file-info hidden"></div>
+
+        <label class="field-label">Compression mode</label>
+        <div class="radio-group">
+          <label><input type="radio" name="compressMode" value="light" checked> Light — modest savings, keeps text selectable</label>
+          <label><input type="radio" name="compressMode" value="strong"> Strong — rasterize pages (larger savings, no text selection)</label>
+        </div>
+
+        <div id="compressDpiGroup" class="hidden">
+          <label class="field-label" for="compressDpi">Raster DPI</label>
+          <select id="compressDpi">
+            <option value="150">150 DPI (balanced)</option>
+            <option value="100" selected>100 DPI (smaller)</option>
+            <option value="72">72 DPI (smallest)</option>
+          </select>
+          <p class="warning">Strong mode converts each page to an image. Best for scanned or image-heavy PDFs.</p>
+        </div>
+
+        <button id="compressButton" class="primary-btn" disabled>Compress PDF</button>
+        <div id="compressResult" class="compress-result hidden"></div>
+      </div>
+    </section>
+
+    <div id="status" class="status" aria-live="polite"></div>
+    <progress id="progress" class="progress-bar" value="0" max="100" hidden></progress>
+  </div>
+
+  <script src="js/script.js"></script>
+</body>
+</html>
