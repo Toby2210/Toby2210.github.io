@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>P2P Fast Transfer</title>
-  <meta name="version" content="1.0.4">
+  <meta name="version" content="1.0.5">
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="manifest" href="manifest.json">
@@ -65,13 +65,68 @@
   </div>
 
   <script>
-    // Raw ArrayBuffer over PeerJS (not JSON-wrapped)
-    const CHUNK_SIZE = 1024 * 1024;
+    if (typeof streamSaver !== 'undefined') {
+      streamSaver.mitm = new URL('mitm.html', window.location.href).href;
+    }
+
+    const ICE_SERVERS = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' }
+    ];
+    const PEER_RTC_CONFIG = { iceServers: ICE_SERVERS, iceCandidatePoolSize: 10 };
+    const PEER_CONN_OPTS = { reliable: true, serialization: 'binary' };
+
     const MAX_BUFFERED_AMOUNT = 32 * 1024 * 1024;
     const KEY_TTL_SECONDS = 10 * 60;
     const LOW_WATER_MARK = 2 * 1024 * 1024;
-    // In-memory ZIP only for small multi-file bundles; large sets stream file-by-file
     const MAX_ZIP_TOTAL_BYTES = 512 * 1024 * 1024;
+
+    function isMobileDevice() {
+      return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    }
+
+    function getChunkSize() {
+      // Android WebRTC data channels are more stable with smaller frames
+      return isMobileDevice() ? 256 * 1024 : 1024 * 1024;
+    }
+
+    function getReceiveWriteBatchSize() {
+      return isMobileDevice() ? 512 * 1024 : 2 * 1024 * 1024;
+    }
+
+    function tuneDataChannel(conn) {
+      const dc = conn.dataChannel;
+      if (!dc) return;
+      dc.binaryType = 'arraybuffer';
+      dc.bufferedAmountLowThreshold = LOW_WATER_MARK;
+    }
+
+    async function describeIcePath(conn) {
+      const pc = conn.peerConnection;
+      if (!pc) return '';
+      const stats = await pc.getStats();
+      const candidates = new Map();
+      stats.forEach((r) => {
+        if (r.type === 'local-candidate' || r.type === 'remote-candidate') {
+          candidates.set(r.id, r);
+        }
+      });
+      let selected = null;
+      stats.forEach((r) => {
+        if (r.type === 'candidate-pair' && (r.selected || r.nominated)) selected = r;
+      });
+      if (!selected) return '';
+      const local = candidates.get(selected.localCandidateId);
+      const remote = candidates.get(selected.remoteCandidateId);
+      if (!local || !remote) return '';
+      const localType = local.candidateType || '?';
+      const remoteType = remote.candidateType || '?';
+      if (localType === 'relay' || remoteType === 'relay') {
+        return `Link: relay (needs TURN server for best speed)`;
+      }
+      return `Link: direct (${localType} → ${remoteType})`;
+    }
 
     function isBinaryPayload(data) {
       return data instanceof ArrayBuffer
@@ -147,6 +202,7 @@
     }
 
     async function streamFileOverConn(conn, file, onOffset) {
+      const chunkSize = getChunkSize();
       conn.send({
         type: 'FILE_HEADER',
         name: file.name,
@@ -156,18 +212,18 @@
 
       const dc = conn.dataChannel;
       let offset = 0;
-      let nextRead = readFileSlice(file, 0, Math.min(CHUNK_SIZE, file.size));
+      let nextRead = readFileSlice(file, 0, Math.min(chunkSize, file.size));
 
       while (offset < file.size) {
         while (offset < file.size && (!dc || dc.bufferedAmount <= MAX_BUFFERED_AMOUNT)) {
-          const end = Math.min(offset + CHUNK_SIZE, file.size);
+          const end = Math.min(offset + chunkSize, file.size);
           const buffer = await nextRead;
           conn.send(buffer);
           offset = end;
           if (onOffset) onOffset(offset);
 
           if (offset < file.size) {
-            const nextEnd = Math.min(offset + CHUNK_SIZE, file.size);
+            const nextEnd = Math.min(offset + chunkSize, file.size);
             nextRead = readFileSlice(file, offset, nextEnd);
           }
         }
@@ -383,11 +439,7 @@
       const passkey = generate6DigitCode();
       if (session.sendPeer) session.sendPeer.destroy();
 
-      session.sendPeer = new Peer(passkey, {
-        config: {
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        }
-      });
+      session.sendPeer = new Peer(passkey, { config: PEER_RTC_CONFIG });
 
       session.sendPeer.on('open', (id) => {
         document.getElementById(`passkey-display-${n}`).innerText = id;
@@ -459,9 +511,7 @@
             sendStatus.innerText = 'Confirming file package...';
             const payload = await preparePayloadPromise;
 
-            if (conn.dataChannel) {
-              conn.dataChannel.bufferedAmountLowThreshold = LOW_WATER_MARK;
-            }
+            tuneDataChannel(conn);
 
             sendStatus.innerText = 'Sending file...';
             sendProgress.style.display = 'block';
@@ -558,7 +608,7 @@
     }
 
     // --- Receiver ---
-    function startReceiving(n) {
+    async function startReceiving(n) {
       const session = sessions.get(n);
       if (!session) return;
       const codeInput = document.getElementById(`receive-code-${n}`).value.trim();
@@ -573,21 +623,33 @@
       }
 
       receiveBtn.disabled = true;
-      receiveStatus.innerText = 'Connecting...';
       receiveProgress.style.display = 'none';
       receiveSpeed.innerText = '';
 
-      if (session.receivePeer) session.receivePeer.destroy();
-      const receivePeer = new Peer({
-        config: {
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      let fsaWritable = null;
+      if (window.showSaveFilePicker && !isMobileDevice()) {
+        receiveStatus.innerText = 'Pick save location (recommended on PC for speed)...';
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: 'p2p-download',
+            types: [{ accept: { '*/*': [] } }]
+          });
+          fsaWritable = await handle.createWritable();
+        } catch (err) {
+          if (err.name !== 'AbortError') console.warn(err);
         }
-      });
+      }
+
+      receiveStatus.innerText = 'Connecting...';
+
+      if (session.receivePeer) session.receivePeer.destroy();
+      const receivePeer = new Peer({ config: PEER_RTC_CONFIG });
       session.receivePeer = receivePeer;
 
       let currentFileMeta = null;
       let fileWriteStream = null;
       let writer = null;
+      let useNativeWritable = !!fsaWritable;
       let totalReceivedSize = 0;
       let batchFileCount = 0;
       let batchFileIndex = 0;
@@ -599,13 +661,37 @@
       let lastProgressPercent = -1;
       let lastProgressSentTime = 0;
       let writeChain = Promise.resolve();
+      let writeBuffer = [];
+      let writeBufferLen = 0;
+      const writeBatchSize = getReceiveWriteBatchSize();
+      const progressStep = isMobileDevice() ? 5 : 2;
+
+      function flushWriteBuffer() {
+        if (!writer || writeBufferLen === 0) return;
+        const merged = new Uint8Array(writeBufferLen);
+        let at = 0;
+        for (const part of writeBuffer) {
+          merged.set(part, at);
+          at += part.byteLength;
+        }
+        writeBuffer = [];
+        writeBufferLen = 0;
+        writeChain = writeChain.then(() => writer.write(merged));
+      }
 
       function queueChunkWrite(u8) {
         if (!writer) return;
-        writeChain = writeChain.then(() => writer.write(u8));
+        if (useNativeWritable) {
+          writeChain = writeChain.then(() => writer.write(u8));
+          return;
+        }
+        writeBuffer.push(u8);
+        writeBufferLen += u8.byteLength;
+        if (writeBufferLen >= writeBatchSize) flushWriteBuffer();
       }
 
       async function closeCurrentWriter(expectedSize) {
+        flushWriteBuffer();
         await writeChain;
         if (!writer) return true;
         let ok = expectedSize == null || totalReceivedSize === expectedSize;
@@ -661,8 +747,8 @@
 
             const shouldSendProgress =
               progress === 100 ||
-              progress - lastProgressPercent >= 2 ||
-              (now - lastProgressSentTime >= 500 && progress !== lastProgressPercent);
+              progress - lastProgressPercent >= progressStep ||
+              (now - lastProgressSentTime >= 800 && progress !== lastProgressPercent);
 
             if (shouldSendProgress) {
               const speedForSender = recvSpeed != null && recvSpeed > 0 ? recvSpeed : undefined;
@@ -694,10 +780,20 @@
           lastProgressPercent = -1;
           lastProgressSentTime = 0;
 
-          fileWriteStream = streamSaver.createWriteStream(currentFileMeta.name, {
-            size: currentFileMeta.size
-          });
-          writer = fileWriteStream.getWriter();
+          if (useNativeWritable && fsaWritable && batchFileCount <= 1) {
+            writer = {
+              write: (u8) => fsaWritable.write(u8),
+              close: () => fsaWritable.close(),
+              abort: () => fsaWritable.abort()
+            };
+            receiveStatus.innerText = `Saving as ${currentFileMeta.name}... 0%`;
+          } else {
+            useNativeWritable = false;
+            fileWriteStream = streamSaver.createWriteStream(currentFileMeta.name, {
+              size: currentFileMeta.size
+            });
+            writer = fileWriteStream.getWriter();
+          }
           return;
         }
 
@@ -744,11 +840,20 @@
       }
 
       receivePeer.on('open', () => {
-        const conn = receivePeer.connect(codeInput);
+        const conn = receivePeer.connect(codeInput, PEER_CONN_OPTS);
         let messageChain = Promise.resolve();
 
-        conn.on('open', () => {
-          receiveStatus.innerText = 'Connected. Waiting for data...';
+        conn.on('open', async () => {
+          tuneDataChannel(conn);
+          let linkHint = '';
+          try {
+            linkHint = await describeIcePath(conn);
+          } catch (e) {
+            console.warn(e);
+          }
+          receiveStatus.innerText = linkHint
+            ? `Connected. ${linkHint}`
+            : 'Connected. Waiting for data...';
         });
 
         conn.on('data', (data) => {
