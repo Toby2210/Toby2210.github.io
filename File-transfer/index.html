@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>P2P Fast Transfer</title>
-  <meta name="version" content="1.0.1">
+  <meta name="version" content="1.0.4">
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="manifest" href="manifest.json">
@@ -65,10 +65,117 @@
   </div>
 
   <script>
-    const CHUNK_SIZE = 1 * 1024 * 1024; // CHUNK SIZE
-    const MAX_BUFFERED_AMOUNT = 6 * 1024 * 1024; // MAX BUFFERED AMOUNT
+    // Raw ArrayBuffer over PeerJS (not JSON-wrapped)
+    const CHUNK_SIZE = 1024 * 1024;
+    const MAX_BUFFERED_AMOUNT = 32 * 1024 * 1024;
     const KEY_TTL_SECONDS = 10 * 60;
-    const LOW_WATER_MARK = 1.5 * 1024 * 1024;      // 2 MB low water mark（resume 發送）
+    const LOW_WATER_MARK = 2 * 1024 * 1024;
+    // In-memory ZIP only for small multi-file bundles; large sets stream file-by-file
+    const MAX_ZIP_TOTAL_BYTES = 512 * 1024 * 1024;
+
+    function isBinaryPayload(data) {
+      return data instanceof ArrayBuffer
+        || ArrayBuffer.isView(data);
+    }
+
+    function toUint8Array(chunk) {
+      if (chunk instanceof Uint8Array) return chunk;
+      if (chunk instanceof ArrayBuffer) return new Uint8Array(chunk);
+      if (ArrayBuffer.isView(chunk)) {
+        return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      }
+      return new Uint8Array(chunk);
+    }
+
+    function binaryByteLength(data) {
+      if (data instanceof ArrayBuffer) return data.byteLength;
+      if (ArrayBuffer.isView(data)) return data.byteLength;
+      return 0;
+    }
+
+    async function waitForBufferLow(conn) {
+      const dc = conn.dataChannel;
+      if (!dc || dc.bufferedAmount <= MAX_BUFFERED_AMOUNT) return;
+      await new Promise((resolve) => {
+        const onLow = () => {
+          dc.removeEventListener('bufferedamountlow', onLow);
+          resolve();
+        };
+        dc.addEventListener('bufferedamountlow', onLow);
+      });
+    }
+
+    async function drainSendBuffer(conn) {
+      const dc = conn.dataChannel;
+      if (!dc) return;
+      while (dc.bufferedAmount > 0) {
+        await new Promise((resolve) => {
+          const tryResolve = () => {
+            if (dc.bufferedAmount === 0) {
+              dc.removeEventListener('bufferedamountlow', tryResolve);
+              resolve();
+            }
+          };
+          dc.bufferedAmountLowThreshold = 0;
+          dc.addEventListener('bufferedamountlow', tryResolve);
+          tryResolve();
+        });
+      }
+      dc.bufferedAmountLowThreshold = LOW_WATER_MARK;
+    }
+
+    function createDeliveredSpeedTracker() {
+      let lastSent = 0;
+      let lastBuffered = 0;
+      let lastTime = Date.now();
+      return function update(bytesSentTotal, dc) {
+        const now = Date.now();
+        if (now - lastTime < 400) return null;
+        const buffered = dc?.bufferedAmount ?? 0;
+        const delivered = bytesSentTotal - buffered;
+        const prevDelivered = lastSent - lastBuffered;
+        const speed = (delivered - prevDelivered) / ((now - lastTime) / 1000);
+        lastSent = bytesSentTotal;
+        lastBuffered = buffered;
+        lastTime = now;
+        return Math.max(0, speed);
+      };
+    }
+
+    async function readFileSlice(file, start, end) {
+      return file.slice(start, end).arrayBuffer();
+    }
+
+    async function streamFileOverConn(conn, file, onOffset) {
+      conn.send({
+        type: 'FILE_HEADER',
+        name: file.name,
+        size: file.size,
+        fileType: file.type || 'application/octet-stream'
+      });
+
+      const dc = conn.dataChannel;
+      let offset = 0;
+      let nextRead = readFileSlice(file, 0, Math.min(CHUNK_SIZE, file.size));
+
+      while (offset < file.size) {
+        while (offset < file.size && (!dc || dc.bufferedAmount <= MAX_BUFFERED_AMOUNT)) {
+          const end = Math.min(offset + CHUNK_SIZE, file.size);
+          const buffer = await nextRead;
+          conn.send(buffer);
+          offset = end;
+          if (onOffset) onOffset(offset);
+
+          if (offset < file.size) {
+            const nextEnd = Math.min(offset + CHUNK_SIZE, file.size);
+            nextRead = readFileSlice(file, offset, nextEnd);
+          }
+        }
+        if (offset < file.size) {
+          await waitForBufferLow(conn);
+        }
+      }
+    }
 
     let sessionCounter = 0;
 
@@ -79,6 +186,20 @@
     function formatSpeed(bytesPerSec) {
       if (bytesPerSec > 1024 * 1024) return (bytesPerSec / (1024 * 1024)).toFixed(1) + ' MB/s';
       return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
+    }
+
+    function formatEta(seconds) {
+      if (!Number.isFinite(seconds) || seconds <= 0) return '0s';
+      const total = Math.ceil(seconds);
+      if (total < 60) return `${total}s`;
+      if (total < 3600) {
+        const mins = Math.ceil(total / 60);
+        return `${mins}m`;
+      }
+      const hours = Math.floor(total / 3600);
+      const mins = Math.ceil((total % 3600) / 60);
+      if (mins === 60) return `${hours + 1}h`;
+      return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
     }
 
     // --- Session management ---
@@ -285,36 +406,48 @@
         }
       });
 
-      // Background ZIP Packaging with Progress Callback
-      let fileToSend = null;
-      const prepareFilePromise = (async () => {
-        if (files.length > 1) {
+      const preparePayloadPromise = (async () => {
+        if (files.length === 1) {
+          sendStatus.innerText = 'Waiting for recipient...';
+          return { mode: 'single', files: [files[0]] };
+        }
+
+        const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+        if (totalBytes <= MAX_ZIP_TOTAL_BYTES) {
           sendProgress.style.display = 'block';
           sendProgress.value = 0;
           sendStatus.innerText = 'Creating ZIP archive: 0%';
 
-          const zip = new JSZip();
-          for (const f of files) {
-            zip.file(f.name, f);
-          }
-
-          const zipBlob = await zip.generateAsync(
-            { type: 'blob', compression: 'STORE' },
-            (metadata) => {
-              const percent = Math.floor(metadata.percent);
-              sendProgress.value = percent;
-              sendStatus.innerText = `Creating ZIP archive: ${percent}%`;
+          try {
+            const zip = new JSZip();
+            for (const f of files) {
+              zip.file(f.name, f);
             }
-          );
 
-          sendStatus.innerText = 'ZIP ready. Waiting for recipient...';
-          sendProgress.style.display = 'none';
+            const zipBlob = await zip.generateAsync(
+              { type: 'blob', compression: 'STORE', streamFiles: true },
+              (metadata) => {
+                const percent = Math.floor(metadata.percent);
+                sendProgress.value = percent;
+                sendStatus.innerText = `Creating ZIP archive: ${percent}%`;
+              }
+            );
 
-          return new File([zipBlob], `archive_${Date.now()}.zip`, { type: 'application/zip' });
+            sendStatus.innerText = 'ZIP ready. Waiting for recipient...';
+            sendProgress.style.display = 'none';
+
+            const zipFile = new File([zipBlob], `archive_${Date.now()}.zip`, { type: 'application/octet-stream' });
+            return { mode: 'single', files: [zipFile] };
+          } catch (err) {
+            console.warn('ZIP packaging failed, falling back to sequential send:', err);
+            sendProgress.style.display = 'none';
+            sendStatus.innerText = 'ZIP skipped (too large). Will send files one by one...';
+          }
         } else {
-          sendStatus.innerText = 'Waiting for recipient...';
-          return files[0];
+          sendStatus.innerText = `Large bundle (${files.length} files). Will send sequentially without ZIP...`;
         }
+
+        return { mode: 'multi', files };
       })();
 
       session.sendPeer.on('connection', (conn) => {
@@ -322,75 +455,83 @@
         if (session.countdownInterval) clearInterval(session.countdownInterval);
 
         conn.on('open', async () => {
-          sendStatus.innerText = 'Confirming file package...';
-          fileToSend = await prepareFilePromise;
+          try {
+            sendStatus.innerText = 'Confirming file package...';
+            const payload = await preparePayloadPromise;
 
-          sendStatus.innerText = 'Sending file...';
-          sendProgress.style.display = 'block';
-          sendProgress.value = 0;
+            if (conn.dataChannel) {
+              conn.dataChannel.bufferedAmountLowThreshold = LOW_WATER_MARK;
+            }
 
-          conn.send({
-            type: 'FILE_HEADER',
-            name: fileToSend.name,
-            size: fileToSend.size,
-            fileType: fileToSend.type
-          });
+            sendStatus.innerText = 'Sending file...';
+            sendProgress.style.display = 'block';
+            sendProgress.value = 0;
 
-          // 正確的 flow control：用 bufferedamountlow 事件，唔再 setTimeout 輪詢
-          if (conn.dataChannel) {
-            conn.dataChannel.bufferedAmountLowThreshold = LOW_WATER_MARK;
-          }
+            const totalBytes = payload.files.reduce((sum, f) => sum + f.size, 0);
+            let bytesSentTotal = 0;
+            const updateDeliveredSpeed = createDeliveredSpeedTracker();
+            const dc = conn.dataChannel;
 
-          let offset = 0;
-          let startTime = Date.now();
-          let lastTime = startTime;
-          let lastOffset = 0;
-
-          const sendNextChunk = async () => {
-            while (offset < fileToSend.size) {
-              // 當 buffer 超過 high water mark 就等 low water 事件
-              if (conn.dataChannel && conn.dataChannel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
-                await new Promise(resolve => {
-                  const onLow = () => {
-                    conn.dataChannel.removeEventListener('bufferedamountlow', onLow);
-                    resolve();
-                  };
-                  conn.dataChannel.addEventListener('bufferedamountlow', onLow);
-                });
-              }
-            
-              const end = Math.min(offset + CHUNK_SIZE, fileToSend.size);
-              const slice = fileToSend.slice(offset, end);
-              const buffer = await slice.arrayBuffer();
-              conn.send({ type: 'CHUNK', chunk: buffer });
-              offset = end;
-            
-              // 每 400ms 更新一次速度顯示
-              const now = Date.now();
-              if (now - lastTime >= 400) {
-                const bytesSent = offset - lastOffset;
-                const speed = bytesSent / ((now - lastTime) / 1000);
+            const onFileProgress = () => {
+              const speed = updateDeliveredSpeed(bytesSentTotal, dc);
+              if (speed != null) {
                 sendSpeed.innerText = `Speed: ${formatSpeed(speed)}`;
-                lastTime = now;
-                lastOffset = offset;
+              }
+            };
+
+            if (payload.mode === 'multi') {
+              conn.send({
+                type: 'BATCH_START',
+                fileCount: payload.files.length,
+                totalBytes
+              });
+            }
+
+            let bytesSentBeforeCurrent = 0;
+            for (let i = 0; i < payload.files.length; i++) {
+              const file = payload.files[i];
+              sendStatus.innerText = payload.files.length > 1
+                ? `Sending file ${i + 1}/${payload.files.length}: ${file.name}...`
+                : 'Sending file...';
+
+              await streamFileOverConn(conn, file, (fileOffset) => {
+                bytesSentTotal = bytesSentBeforeCurrent + fileOffset;
+                if (totalBytes > 0) {
+                  sendProgress.value = Math.min(100, Math.round((bytesSentTotal / totalBytes) * 100));
+                }
+                onFileProgress();
+              });
+
+              bytesSentBeforeCurrent += file.size;
+
+              if (payload.mode === 'multi') {
+                conn.send({ type: 'FILE_END' });
               }
             }
-          
-            conn.send({ type: 'ALL_END' });
-          };
 
-          sendNextChunk();
+            await drainSendBuffer(conn);
+            conn.send({ type: 'ALL_END' });
+          } catch (err) {
+            console.error(err);
+            cleanupSendState(session, 'Send failed: ' + (err.message || err));
+          }
         });
 
         conn.on('data', (data) => {
           if (data.type === 'PROGRESS') {
             sendProgress.value = data.percent;
             sendStatus.innerText = `Recipient receiving... ${data.percent}%`;
+            if (typeof data.speed === 'number' && data.speed > 0) {
+              sendSpeed.innerText = `Speed: ${formatSpeed(data.speed)}`;
+            }
           }
           else if (data.type === 'ACK') {
             sendProgress.value = 100;
             sendProgress.style.display = 'none';
             cleanupSendState(session, 'Transfer complete! Key destroyed.');
+          }
+          else if (data.type === 'ERROR') {
+            cleanupSendState(session, 'Recipient reported error: ' + (data.message || 'unknown'));
           }
         });
       });
@@ -448,106 +589,181 @@
       let fileWriteStream = null;
       let writer = null;
       let totalReceivedSize = 0;
+      let batchFileCount = 0;
+      let batchFileIndex = 0;
+      let batchBytesTotal = 0;
+      let batchBytesReceived = 0;
 
-      let startTime = 0;
       let lastTime = 0;
       let lastReceived = 0;
-      let lastProgressPercent = -1;   // 用來大幅減少 PROGRESS 回報
+      let lastProgressPercent = -1;
       let lastProgressSentTime = 0;
+      let writeChain = Promise.resolve();
+
+      function queueChunkWrite(u8) {
+        if (!writer) return;
+        writeChain = writeChain.then(() => writer.write(u8));
+      }
+
+      async function closeCurrentWriter(expectedSize) {
+        await writeChain;
+        if (!writer) return true;
+        let ok = expectedSize == null || totalReceivedSize === expectedSize;
+        try {
+          if (ok) await writer.close();
+          else await writer.abort();
+        } catch (e) {
+          console.error(e);
+          ok = false;
+        }
+        writer = null;
+        fileWriteStream = null;
+        return ok;
+      }
+
+      async function handleIncomingMessage(conn, data) {
+        if (data && data.type === 'CHUNK') {
+          data = data.chunk;
+        }
+
+        if (isBinaryPayload(data)) {
+          const byteLength = binaryByteLength(data);
+          totalReceivedSize += byteLength;
+          batchBytesReceived += byteLength;
+
+          if (writer) {
+            queueChunkWrite(toUint8Array(data));
+          }
+
+          const now = Date.now();
+          let recvSpeed = null;
+          if (now - lastTime >= 500) {
+            const diffBytes = batchBytesTotal > 0 ? batchBytesReceived - lastReceived : totalReceivedSize - lastReceived;
+            recvSpeed = diffBytes / ((now - lastTime) / 1000);
+            const remainingBytes = batchBytesTotal > 0
+              ? batchBytesTotal - batchBytesReceived
+              : (currentFileMeta ? currentFileMeta.size - totalReceivedSize : 0);
+            const etaSec = recvSpeed > 0 ? Math.ceil(remainingBytes / recvSpeed) : 0;
+            receiveSpeed.innerText = `Speed: ${formatSpeed(recvSpeed)} | ETA: ${formatEta(etaSec)}`;
+            lastTime = now;
+            lastReceived = batchBytesTotal > 0 ? batchBytesReceived : totalReceivedSize;
+          }
+
+          if (currentFileMeta && currentFileMeta.size > 0) {
+            const progress = batchBytesTotal > 0
+              ? Math.min(100, Math.round((batchBytesReceived / batchBytesTotal) * 100))
+              : Math.min(100, Math.round((totalReceivedSize / currentFileMeta.size) * 100));
+            receiveProgress.value = progress;
+            const fileLabel = batchFileCount > 1
+              ? ` (file ${batchFileIndex}/${batchFileCount})`
+              : '';
+            receiveStatus.innerText = `Downloading${fileLabel}... ${progress}%`;
+
+            const shouldSendProgress =
+              progress === 100 ||
+              progress - lastProgressPercent >= 2 ||
+              (now - lastProgressSentTime >= 500 && progress !== lastProgressPercent);
+
+            if (shouldSendProgress) {
+              const speedForSender = recvSpeed != null && recvSpeed > 0 ? recvSpeed : undefined;
+              conn.send({ type: 'PROGRESS', percent: progress, speed: speedForSender });
+              lastProgressPercent = progress;
+              lastProgressSentTime = now;
+            }
+          }
+          return;
+        }
+
+        if (data.type === 'BATCH_START') {
+          batchFileCount = data.fileCount || 0;
+          batchFileIndex = 0;
+          batchBytesTotal = data.totalBytes || 0;
+          batchBytesReceived = 0;
+          return;
+        }
+
+        if (data.type === 'FILE_HEADER') {
+          await writeChain;
+          batchFileIndex += 1;
+          currentFileMeta = data;
+          totalReceivedSize = 0;
+          writeChain = Promise.resolve();
+          receiveProgress.style.display = 'block';
+          lastTime = Date.now();
+          lastReceived = batchBytesTotal > 0 ? batchBytesReceived : 0;
+          lastProgressPercent = -1;
+          lastProgressSentTime = 0;
+
+          fileWriteStream = streamSaver.createWriteStream(currentFileMeta.name, {
+            size: currentFileMeta.size
+          });
+          writer = fileWriteStream.getWriter();
+          return;
+        }
+
+        if (data.type === 'FILE_END') {
+          const ok = await closeCurrentWriter(currentFileMeta ? currentFileMeta.size : null);
+          if (!ok) {
+            receiveStatus.innerText = `File incomplete: ${currentFileMeta?.name || 'unknown'}`;
+            conn.send({ type: 'ERROR', message: 'Incomplete file' });
+          }
+          currentFileMeta = null;
+          totalReceivedSize = 0;
+          return;
+        }
+
+        if (data.type === 'ALL_END') {
+          await writeChain;
+          let ok = true;
+          if (writer) {
+            ok = await closeCurrentWriter(currentFileMeta ? currentFileMeta.size : null);
+            if (!ok) {
+              receiveStatus.innerText = 'Download failed: file size mismatch.';
+              conn.send({ type: 'ERROR', message: 'Size mismatch' });
+              receiveBtn.disabled = false;
+              return;
+            }
+          }
+
+          receiveStatus.innerText = batchFileCount > 1
+            ? `Download complete! ${batchFileCount} files saved.`
+            : 'Download complete! Saved according to browser settings.';
+          receiveSpeed.innerText = '';
+          receiveProgress.style.display = 'none';
+          receiveBtn.disabled = false;
+          document.getElementById(`receive-code-${n}`).value = '';
+
+          conn.send({ type: 'ACK' });
+          setTimeout(() => {
+            if (session.receivePeer === receivePeer) {
+              session.receivePeer = null;
+            }
+            receivePeer.destroy();
+          }, 1000);
+        }
+      }
 
       receivePeer.on('open', () => {
         const conn = receivePeer.connect(codeInput);
+        let messageChain = Promise.resolve();
 
         conn.on('open', () => {
           receiveStatus.innerText = 'Connected. Waiting for data...';
         });
 
-        conn.on('data', async (data) => {
-          if (data.type === 'FILE_HEADER') {
-            currentFileMeta = data;
-            receiveProgress.style.display = 'block';
-
-            startTime = Date.now();
-            lastTime = startTime;
-            lastProgressPercent = -1;
-            lastProgressSentTime = 0;
-
-            fileWriteStream = streamSaver.createWriteStream(currentFileMeta.name, {
-              size: currentFileMeta.size
+        conn.on('data', (data) => {
+          messageChain = messageChain
+            .then(() => handleIncomingMessage(conn, data))
+            .catch((err) => {
+              console.error(err);
+              if (writer) writer.abort().catch(() => {});
+              receiveStatus.innerText = 'Receive error: ' + (err.message || err);
+              receiveBtn.disabled = false;
             });
-            writer = fileWriteStream.getWriter();
-          }
-          else if (data.type === 'CHUNK') {
-            const chunk = data.chunk;
-            // 相容不同型別的長度計算
-            const byteLength = chunk.byteLength ?? chunk.byteLength ?? (chunk.buffer?.byteLength) ?? chunk.length ?? 0;
-            totalReceivedSize += byteLength;
-
-            if (writer) {
-              // 優先直接寫入，減少記憶體複製
-              if (chunk instanceof Uint8Array) {
-                await writer.write(chunk);
-              } else if (chunk instanceof ArrayBuffer) {
-                await writer.write(new Uint8Array(chunk)); // view，不複製資料
-              } else {
-                await writer.write(new Uint8Array(chunk));
-              }
-            }
-
-            const now = Date.now();
-            if (now - lastTime >= 500) {
-              const diffBytes = totalReceivedSize - lastReceived;
-              const speed = (diffBytes / ((now - lastTime) / 1000));
-              const remainingBytes = currentFileMeta.size - totalReceivedSize;
-              const etaSec = speed > 0 ? Math.ceil(remainingBytes / speed) : 0;
-
-              receiveSpeed.innerText = `Speed: ${formatSpeed(speed)} | ETA: ${etaSec}s`;
-              lastTime = now;
-              lastReceived = totalReceivedSize;
-            }
-
-            if (currentFileMeta && currentFileMeta.size > 0) {
-              const progress = Math.min(100, Math.round((totalReceivedSize / currentFileMeta.size) * 100));
-              receiveProgress.value = progress;
-              receiveStatus.innerText = `Downloading to default location... ${progress}%`;
-
-              // 大幅減少進度回報：每增加 2% 或每 500ms 先回一次（最後 100% 一定回）
-              const shouldSendProgress =
-                progress === 100 ||
-                progress - lastProgressPercent >= 2 ||
-                (now - lastProgressSentTime >= 500 && progress !== lastProgressPercent);
-
-              if (shouldSendProgress) {
-                conn.send({ type: 'PROGRESS', percent: progress });
-                lastProgressPercent = progress;
-                lastProgressSentTime = now;
-              }
-            }
-          }
-          else if (data.type === 'ALL_END') {
-            if (writer) {
-              await writer.close();
-              writer = null;
-            }
-
-            receiveStatus.innerText = 'Download complete! Saved according to browser settings.';
-            receiveSpeed.innerText = '';
-            receiveProgress.style.display = 'none';
-            receiveBtn.disabled = false;
-            document.getElementById(`receive-code-${n}`).value = '';
-
-            conn.send({ type: 'ACK' });
-            setTimeout(() => {
-              if (session.receivePeer === receivePeer) {
-                session.receivePeer = null;
-              }
-              receivePeer.destroy();
-            }, 1000);
-          }
         });
 
         conn.on('error', () => {
-          if (writer) writer.abort();
+          if (writer) writer.abort().catch(() => {});
           receiveStatus.innerText = 'Connection lost.';
           receiveBtn.disabled = false;
         });
