@@ -790,18 +790,6 @@
       receiveSpeed.innerText = '';
 
       let fsaWritable = null;
-      if (window.showSaveFilePicker && !isMobileDevice()) {
-        receiveStatus.innerText = 'Pick save location (recommended on PC for speed)...';
-        try {
-          const handle = await window.showSaveFilePicker({
-            suggestedName: 'p2p-download',
-            types: [{ accept: { '*/*': [] } }]
-          });
-          fsaWritable = await handle.createWritable();
-        } catch (err) {
-          if (err.name !== 'AbortError') console.warn(err);
-        }
-      }
 
       receiveStatus.innerText = 'Connecting...';
 
@@ -812,7 +800,7 @@
       let currentFileMeta = null;
       let fileWriteStream = null;
       let writer = null;
-      let useNativeWritable = !!fsaWritable;
+      let useNativeWritable = false;
       let totalReceivedSize = 0;
       let batchFileCount = 0;
       let batchFileIndex = 0;
@@ -944,13 +932,30 @@
           lastProgressPercent = -1;
           lastProgressSentTime = 0;
 
-          if (useNativeWritable && fsaWritable && batchFileCount <= 1) {
-            writer = {
-              write: (u8) => fsaWritable.write(u8),
-              close: () => fsaWritable.close(),
-              abort: () => fsaWritable.abort()
-            };
-            receiveStatus.innerText = `Saving as ${currentFileMeta.name}... 0%`;
+          if (window.showSaveFilePicker && !isMobileDevice() && batchFileCount <= 1) {
+            receiveStatus.innerText = `Choose save location for ${currentFileMeta.name}...`;
+            try {
+              const handle = await window.showSaveFilePicker({
+                suggestedName: currentFileMeta.name,
+                types: [{ accept: { '*/*': [] } }]
+              });
+              fsaWritable = await handle.createWritable();
+              useNativeWritable = true;
+              writer = {
+                write: (u8) => fsaWritable.write(u8),
+                close: () => fsaWritable.close(),
+                abort: () => fsaWritable.abort()
+              };
+              receiveStatus.innerText = `Saving as ${currentFileMeta.name}... 0%`;
+            } catch (err) {
+              if (err.name !== 'AbortError') console.warn(err);
+              fsaWritable = null;
+              useNativeWritable = false;
+              fileWriteStream = streamSaver.createWriteStream(currentFileMeta.name, {
+                size: currentFileMeta.size
+              });
+              writer = fileWriteStream.getWriter();
+            }
           } else {
             useNativeWritable = false;
             fileWriteStream = streamSaver.createWriteStream(currentFileMeta.name, {
