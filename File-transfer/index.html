@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>P2P Fast Transfer</title>
-  <meta name="version" content="1.0.6">
+  <meta name="version" content="1.0.7">
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="manifest" href="manifest.json">
@@ -351,6 +351,51 @@
       return file.slice(start, end).arrayBuffer();
     }
 
+    function uniqueZipEntryName(name, usedNames) {
+      const base = (name && String(name).trim()) || 'file';
+      if (!usedNames.has(base)) {
+        usedNames.add(base);
+        return base;
+      }
+      const dot = base.lastIndexOf('.');
+      const stem = dot > 0 ? base.slice(0, dot) : base;
+      const ext = dot > 0 ? base.slice(dot) : '';
+      let i = 1;
+      let candidate = `${stem}_${i}${ext}`;
+      while (usedNames.has(candidate)) {
+        i += 1;
+        candidate = `${stem}_${i}${ext}`;
+      }
+      usedNames.add(candidate);
+      return candidate;
+    }
+
+    async function buildZipBlobFromFiles(files, onProgress) {
+      const zip = new JSZip();
+      const usedNames = new Set();
+      for (const f of files) {
+        const entryName = uniqueZipEntryName(f.name, usedNames);
+        const payload = await f.arrayBuffer();
+        if (!payload || payload.byteLength === 0) {
+          console.warn('[P2P Transfer] Skipping empty/unreadable file:', f.name);
+          continue;
+        }
+        zip.file(entryName, payload);
+      }
+      const entries = Object.keys(zip.files).filter((k) => !zip.files[k].dir);
+      if (entries.length === 0) {
+        throw new Error('Could not read any selected files for ZIP (try fewer files or send again).');
+      }
+      return zip.generateAsync(
+        { type: 'blob', compression: 'STORE', streamFiles: true },
+        onProgress
+      );
+    }
+
+    function createReceiveWriteStream(filename) {
+      return streamSaver.createWriteStream(filename);
+    }
+
     async function streamFileOverConn(conn, file, onOffset) {
       const chunkSize = getChunkSize();
       const readAhead = DEVICE_PROFILE.transfer.readAheadChunks;
@@ -634,19 +679,11 @@
           sendStatus.innerText = 'Creating ZIP archive: 0%';
 
           try {
-            const zip = new JSZip();
-            for (const f of files) {
-              zip.file(f.name, f);
-            }
-
-            const zipBlob = await zip.generateAsync(
-              { type: 'blob', compression: 'STORE', streamFiles: true },
-              (metadata) => {
-                const percent = Math.floor(metadata.percent);
-                sendProgress.value = percent;
-                sendStatus.innerText = `Creating ZIP archive: ${percent}%`;
-              }
-            );
+            const zipBlob = await buildZipBlobFromFiles(files, (metadata) => {
+              const percent = Math.floor(metadata.percent);
+              sendProgress.value = percent;
+              sendStatus.innerText = `Creating ZIP archive: ${percent}%`;
+            });
 
             sendStatus.innerText = 'ZIP ready. Waiting for recipient...';
             sendProgress.style.display = 'none';
@@ -789,8 +826,6 @@
       receiveProgress.style.display = 'none';
       receiveSpeed.innerText = '';
 
-      let fsaWritable = null;
-
       receiveStatus.innerText = 'Connecting...';
 
       if (session.receivePeer) session.receivePeer.destroy();
@@ -800,7 +835,6 @@
       let currentFileMeta = null;
       let fileWriteStream = null;
       let writer = null;
-      let useNativeWritable = false;
       let totalReceivedSize = 0;
       let batchFileCount = 0;
       let batchFileIndex = 0;
@@ -833,10 +867,6 @@
 
       function queueChunkWrite(u8) {
         if (!writer) return;
-        if (useNativeWritable) {
-          writeChain = writeChain.then(() => writer.write(u8));
-          return;
-        }
         writeBuffer.push(u8);
         writeBufferLen += u8.byteLength;
         if (writeBufferLen >= writeBatchSize) flushWriteBuffer();
@@ -846,13 +876,25 @@
         flushWriteBuffer();
         await writeChain;
         if (!writer) return true;
-        let ok = expectedSize == null || totalReceivedSize === expectedSize;
+        const ok = expectedSize == null || totalReceivedSize === expectedSize;
+        if (!ok) {
+          console.warn(
+            `[P2P Transfer] Size mismatch for ${currentFileMeta?.name || 'file'}: ` +
+            `expected ${expectedSize}, received ${totalReceivedSize}`
+          );
+        }
         try {
-          if (ok) await writer.close();
-          else await writer.abort();
+          await writer.close();
         } catch (e) {
           console.error(e);
-          ok = false;
+          try {
+            await writer.abort();
+          } catch (abortErr) {
+            console.error(abortErr);
+          }
+          writer = null;
+          fileWriteStream = null;
+          return false;
         }
         writer = null;
         fileWriteStream = null;
@@ -889,22 +931,30 @@
 
           if (currentFileMeta && currentFileMeta.size > 0) {
             const progress = batchBytesTotal > 0
-              ? Math.min(100, Math.round((batchBytesReceived / batchBytesTotal) * 100))
-              : Math.min(100, Math.round((totalReceivedSize / currentFileMeta.size) * 100));
+              ? Math.min(99, Math.floor((batchBytesReceived / batchBytesTotal) * 100))
+              : Math.min(
+                99,
+                currentFileMeta.size > 0
+                  ? Math.floor((totalReceivedSize / currentFileMeta.size) * 100)
+                  : 0
+              );
             receiveProgress.value = progress;
             const fileLabel = batchFileCount > 1
               ? ` (file ${batchFileIndex}/${batchFileCount})`
               : '';
             receiveStatus.innerText = `Downloading${fileLabel}... ${progress}%`;
 
+            const atEnd = batchBytesTotal > 0
+              ? batchBytesReceived >= batchBytesTotal
+              : totalReceivedSize >= currentFileMeta.size;
             const shouldSendProgress =
-              progress === 100 ||
+              atEnd ||
               progress - lastProgressPercent >= progressStep ||
               (now - lastProgressSentTime >= progressIntervalMs && progress !== lastProgressPercent);
 
             if (shouldSendProgress) {
               const speedForSender = recvSpeed != null && recvSpeed > 0 ? recvSpeed : undefined;
-              conn.send({ type: 'PROGRESS', percent: progress, speed: speedForSender });
+              conn.send({ type: 'PROGRESS', percent: atEnd ? 100 : progress, speed: speedForSender });
               lastProgressPercent = progress;
               lastProgressSentTime = now;
             }
@@ -932,37 +982,9 @@
           lastProgressPercent = -1;
           lastProgressSentTime = 0;
 
-          if (window.showSaveFilePicker && !isMobileDevice() && batchFileCount <= 1) {
-            receiveStatus.innerText = `Choose save location for ${currentFileMeta.name}...`;
-            try {
-              const handle = await window.showSaveFilePicker({
-                suggestedName: currentFileMeta.name,
-                types: [{ accept: { '*/*': [] } }]
-              });
-              fsaWritable = await handle.createWritable();
-              useNativeWritable = true;
-              writer = {
-                write: (u8) => fsaWritable.write(u8),
-                close: () => fsaWritable.close(),
-                abort: () => fsaWritable.abort()
-              };
-              receiveStatus.innerText = `Saving as ${currentFileMeta.name}... 0%`;
-            } catch (err) {
-              if (err.name !== 'AbortError') console.warn(err);
-              fsaWritable = null;
-              useNativeWritable = false;
-              fileWriteStream = streamSaver.createWriteStream(currentFileMeta.name, {
-                size: currentFileMeta.size
-              });
-              writer = fileWriteStream.getWriter();
-            }
-          } else {
-            useNativeWritable = false;
-            fileWriteStream = streamSaver.createWriteStream(currentFileMeta.name, {
-              size: currentFileMeta.size
-            });
-            writer = fileWriteStream.getWriter();
-          }
+          fileWriteStream = createReceiveWriteStream(currentFileMeta.name);
+          writer = fileWriteStream.getWriter();
+          receiveStatus.innerText = `Downloading ${currentFileMeta.name}... 0%`;
           return;
         }
 
@@ -979,20 +1001,23 @@
 
         if (data.type === 'ALL_END') {
           await writeChain;
-          let ok = true;
+          let sizeOk = true;
           if (writer) {
-            ok = await closeCurrentWriter(currentFileMeta ? currentFileMeta.size : null);
-            if (!ok) {
-              receiveStatus.innerText = 'Download failed: file size mismatch.';
-              conn.send({ type: 'ERROR', message: 'Size mismatch' });
-              receiveBtn.disabled = false;
-              return;
-            }
+            sizeOk = await closeCurrentWriter(currentFileMeta ? currentFileMeta.size : null);
+          }
+
+          receiveProgress.value = 100;
+          if (!sizeOk) {
+            receiveStatus.innerText =
+              'Download finished but size did not match (file may be incomplete). Try sending again.';
+            conn.send({ type: 'ERROR', message: 'Size mismatch' });
+            receiveBtn.disabled = false;
+            return;
           }
 
           receiveStatus.innerText = batchFileCount > 1
             ? `Download complete! ${batchFileCount} files saved.`
-            : 'Download complete! Saved according to browser settings.';
+            : 'Download complete! Saved to your browser\'s default download folder.';
           receiveSpeed.innerText = '';
           receiveProgress.style.display = 'none';
           receiveBtn.disabled = false;
