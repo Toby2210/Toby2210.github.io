@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>P2P Fast Transfer</title>
-  <meta name="version" content="1.0.9">
+  <meta name="version" content="1.0.10">
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="manifest" href="manifest.json">
@@ -71,6 +71,16 @@
   <script>
     if (typeof streamSaver !== 'undefined') {
       streamSaver.mitm = new URL('mitm.html', window.location.href).href;
+    }
+
+    const P2P_DEBUG = true;
+    function p2pLog(side, event, detail) {
+      if (!P2P_DEBUG) return;
+      if (detail === undefined) {
+        console.log(`[P2P Transfer][${side}] ${event}`);
+      } else {
+        console.log(`[P2P Transfer][${side}] ${event}`, detail);
+      }
     }
 
     const ICE_SERVERS = [
@@ -323,23 +333,72 @@
       });
     }
 
-    async function drainSendBuffer(conn) {
+    async function drainSendBuffer(conn, label = 'drain') {
       const dc = conn.dataChannel;
-      if (!dc) return;
+      if (!dc) {
+        p2pLog('send', `${label}: no dataChannel`);
+        return { ok: true, remaining: 0, elapsed: 0 };
+      }
+      const maxWaitMs = isIOSDevice() ? 12000 : 45000;
+      const start = Date.now();
+      let lastLogAt = start;
       while (dc.bufferedAmount > 0) {
+        const elapsed = Date.now() - start;
+        if (elapsed > maxWaitMs) {
+          p2pLog('send', `${label}: TIMEOUT (continuing anyway)`, {
+            remaining: dc.bufferedAmount,
+            elapsed
+          });
+          dc.bufferedAmountLowThreshold = getLowWaterMark();
+          return { ok: false, remaining: dc.bufferedAmount, elapsed };
+        }
+        if (Date.now() - lastLogAt >= 2000) {
+          p2pLog('send', `${label}: waiting for buffer`, {
+            remaining: dc.bufferedAmount,
+            elapsed
+          });
+          lastLogAt = Date.now();
+        }
         await new Promise((resolve) => {
-          const tryResolve = () => {
-            if (dc.bufferedAmount === 0) {
-              dc.removeEventListener('bufferedamountlow', tryResolve);
-              resolve();
-            }
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            dc.removeEventListener('bufferedamountlow', onLow);
+            clearTimeout(pollTimer);
+            resolve();
           };
+          const onLow = () => {
+            if (dc.bufferedAmount === 0) finish();
+          };
+          const pollTimer = setTimeout(finish, 250);
           dc.bufferedAmountLowThreshold = 0;
-          dc.addEventListener('bufferedamountlow', tryResolve);
-          tryResolve();
+          dc.addEventListener('bufferedamountlow', onLow);
+          if (dc.bufferedAmount === 0) finish();
         });
       }
       dc.bufferedAmountLowThreshold = getLowWaterMark();
+      const elapsed = Date.now() - start;
+      p2pLog('send', `${label}: drained`, { elapsed, remaining: dc.bufferedAmount });
+      return { ok: true, remaining: 0, elapsed };
+    }
+
+    function sendAllEndWithRetry(conn) {
+      const dc = conn.dataChannel;
+      const payload = { type: 'ALL_END', ts: Date.now() };
+      conn.send(payload);
+      p2pLog('send', 'ALL_END', { bufferedAmount: dc?.bufferedAmount ?? null });
+      for (let i = 1; i <= 4; i++) {
+        setTimeout(() => {
+          try {
+            if (!conn.open) return;
+            conn.send({ type: 'ALL_END', ts: Date.now(), retry: i });
+            p2pLog('send', 'ALL_END retry', { retry: i, bufferedAmount: dc?.bufferedAmount ?? null });
+          } catch (err) {
+            p2pLog('send', 'ALL_END retry failed', { retry: i, err: String(err) });
+          }
+        }, 350 * i);
+      }
     }
 
     function createDeliveredSpeedTracker() {
@@ -822,22 +881,31 @@
                 onFileProgress();
               });
 
-              await drainSendBuffer(conn);
               conn.send({
                 type: 'FILE_DONE',
                 bytesSent: bytesSentForFile,
                 name: file.name
               });
+              p2pLog('send', 'FILE_DONE', {
+                name: file.name,
+                bytesSent: bytesSentForFile,
+                bufferedAmount: dc?.bufferedAmount ?? null
+              });
+
+              const postFileDrain = await drainSendBuffer(conn, 'post-file');
+              p2pLog('send', 'post-file drain result', postFileDrain);
 
               bytesSentBeforeCurrent += file.size;
 
               if (payload.mode === 'multi') {
                 conn.send({ type: 'FILE_END' });
+                p2pLog('send', 'FILE_END', { name: file.name });
               }
             }
 
-            await drainSendBuffer(conn);
-            conn.send({ type: 'ALL_END' });
+            const preAllEndDrain = await drainSendBuffer(conn, 'pre-all-end');
+            p2pLog('send', 'pre-all-end drain result', preAllEndDrain);
+            sendAllEndWithRetry(conn);
           } catch (err) {
             console.error(err);
             cleanupSendState(session, 'Send failed: ' + (err.message || err));
@@ -846,6 +914,9 @@
 
         conn.on('data', (data) => {
           if (data.type === 'PROGRESS') {
+            if (data.percent >= 100) {
+              p2pLog('send', 'recipient PROGRESS 100 (waiting for ACK)', data);
+            }
             sendProgress.value = data.percent;
             sendStatus.innerText = `Recipient receiving... ${data.percent}%`;
             if (typeof data.speed === 'number' && data.speed > 0) {
@@ -853,11 +924,13 @@
             }
           }
           else if (data.type === 'ACK') {
+            p2pLog('send', 'ACK received from recipient');
             sendProgress.value = 100;
             sendProgress.style.display = 'none';
             cleanupSendState(session, 'Transfer complete! Key destroyed.');
           }
           else if (data.type === 'ERROR') {
+            p2pLog('send', 'ERROR from recipient', data);
             cleanupSendState(session, 'Recipient reported error: ' + (data.message || 'unknown'));
           }
         });
@@ -928,7 +1001,124 @@
       let useMemoryReceive = false;
       let memoryParts = [];
       let confirmedFileBytes = null;
+      let receiveFinished = false;
+      let finalizeWatchdog = null;
       const writeBatchSize = getReceiveWriteBatchSize();
+
+      function clearFinalizeWatchdog() {
+        if (finalizeWatchdog) {
+          clearTimeout(finalizeWatchdog);
+          finalizeWatchdog = null;
+        }
+      }
+
+      function armFinalizeWatchdog(conn, reason, delayMs = 1800) {
+        clearFinalizeWatchdog();
+        finalizeWatchdog = setTimeout(() => {
+          p2pLog('recv', 'finalize watchdog fired', {
+            reason,
+            receiveFinished,
+            totalReceivedSize,
+            expected: expectedReceiveBytes(),
+            confirmedFileBytes,
+            file: currentFileMeta?.name
+          });
+          if (!receiveFinished && currentFileMeta && totalReceivedSize > 0) {
+            void finishReceiveTransfer(conn, `watchdog:${reason}`);
+          }
+        }, delayMs);
+      }
+
+      async function finishReceiveTransfer(conn, reason) {
+        if (receiveFinished) {
+          p2pLog('recv', 'finish skipped (already done)', { reason });
+          return;
+        }
+        receiveFinished = true;
+        clearFinalizeWatchdog();
+
+        p2pLog('recv', 'finish start', {
+          reason,
+          totalReceivedSize,
+          expected: confirmedFileBytes ?? currentFileMeta?.size,
+          useMemoryReceive,
+          parts: memoryParts.length,
+          file: currentFileMeta?.name
+        });
+
+        let sizeOk = true;
+        const expected = confirmedFileBytes != null
+          ? confirmedFileBytes
+          : (currentFileMeta ? currentFileMeta.size : null);
+
+        if (useMemoryReceive && currentFileMeta) {
+          const savedBytes = triggerBrowserBlobDownload(
+            currentFileMeta.name,
+            memoryParts,
+            currentFileMeta.fileType
+          );
+          p2pLog('recv', 'blob download triggered', {
+            savedBytes,
+            totalReceivedSize,
+            filename: currentFileMeta.name
+          });
+          memoryParts = [];
+          useMemoryReceive = false;
+          writer = null;
+          fileWriteStream = null;
+          sizeOk = expected == null || savedBytes === totalReceivedSize
+            || (expected != null && totalReceivedSize >= expected * 0.995);
+          if (!sizeOk && totalReceivedSize > 0 && savedBytes === totalReceivedSize) {
+            sizeOk = true;
+          }
+        } else {
+          flushWriteBuffer();
+          await writeChain;
+          if (writer) {
+            sizeOk = await closeCurrentWriter(expected);
+            if (!sizeOk && expected != null && totalReceivedSize > 0) {
+              const shortBy = expected - totalReceivedSize;
+              const ratio = totalReceivedSize / expected;
+              if (shortBy > 0 && ratio >= 0.995) {
+                p2pLog('recv', 'minor size shortfall accepted', { expected, totalReceivedSize, shortBy });
+                sizeOk = true;
+              }
+            }
+          }
+        }
+
+        receiveProgress.value = 100;
+        if (!sizeOk) {
+          p2pLog('recv', 'finish failed: size mismatch', {
+            expected,
+            totalReceivedSize
+          });
+          receiveStatus.innerText =
+            'Download finished but size did not match (file may be incomplete). Try sending again.';
+          conn.send({ type: 'ERROR', message: 'Size mismatch' });
+          receiveBtn.disabled = false;
+          return;
+        }
+
+        receiveStatus.innerText = batchFileCount > 1
+          ? `Download complete! ${batchFileCount} files saved.`
+          : 'Download complete! Saved to your browser\'s default download folder.';
+        receiveSpeed.innerText = '';
+        receiveProgress.style.display = 'none';
+        receiveBtn.disabled = false;
+        document.getElementById(`receive-code-${n}`).value = '';
+
+        conn.send({ type: 'PROGRESS', percent: 100 });
+        conn.send({ type: 'ACK' });
+        p2pLog('recv', 'finish done — ACK sent', { reason });
+
+        setTimeout(() => {
+          if (session.receivePeer === receivePeer) {
+            session.receivePeer = null;
+          }
+          receivePeer.destroy();
+        }, 1000);
+      }
       const progressStep = DEVICE_PROFILE.transfer.progressStep;
       const progressIntervalMs = DEVICE_PROFILE.transfer.progressIntervalMs;
 
@@ -998,6 +1188,10 @@
           data = data.chunk;
         }
 
+        if (!isBinaryPayload(data) && data && data.type) {
+          p2pLog('recv', `control ${data.type}`, data);
+        }
+
         if (isBinaryPayload(data)) {
           const byteLength = binaryByteLength(data);
           totalReceivedSize += byteLength;
@@ -1036,6 +1230,15 @@
             const atEnd = batchBytesTotal > 0
               ? batchBytesReceived >= batchBytesTotal
               : totalReceivedSize >= expectedBytes;
+
+            if (atEnd) {
+              receiveProgress.value = 100;
+              receiveStatus.innerText = batchFileCount > 1
+                ? `Finalizing${fileLabel}...`
+                : `Finalizing ${currentFileMeta.name}...`;
+              armFinalizeWatchdog(conn, 'bytes-complete');
+            }
+
             const shouldSendProgress =
               atEnd ||
               progress - lastProgressPercent >= progressStep ||
@@ -1044,8 +1247,25 @@
             if (shouldSendProgress) {
               const speedForSender = recvSpeed != null && recvSpeed > 0 ? recvSpeed : undefined;
               conn.send({ type: 'PROGRESS', percent: atEnd ? 100 : progress, speed: speedForSender });
+              if (atEnd) {
+                p2pLog('recv', 'PROGRESS 100 sent to sender', {
+                  totalReceivedSize,
+                  expectedBytes,
+                  confirmedFileBytes
+                });
+              }
               lastProgressPercent = progress;
               lastProgressSentTime = now;
+            }
+
+            if (totalReceivedSize > 0 && (totalReceivedSize % (256 * 1024) < byteLength || atEnd)) {
+              p2pLog('recv', 'chunk milestone', {
+                totalReceivedSize,
+                expectedBytes,
+                byteLength,
+                atEnd,
+                useMemoryReceive
+              });
             }
           }
           return;
@@ -1063,10 +1283,18 @@
           if (currentFileMeta && typeof data.bytesSent === 'number') {
             confirmedFileBytes = data.bytesSent;
             currentFileMeta.size = data.bytesSent;
+            p2pLog('recv', 'FILE_DONE applied', {
+              bytesSent: data.bytesSent,
+              totalReceivedSize,
+              gap: data.bytesSent - totalReceivedSize
+            });
             if (totalReceivedSize >= data.bytesSent) {
               receiveProgress.value = 100;
               receiveStatus.innerText = `Finalizing ${currentFileMeta.name}...`;
               conn.send({ type: 'PROGRESS', percent: 100 });
+              armFinalizeWatchdog(conn, 'file-done', 800);
+            } else {
+              armFinalizeWatchdog(conn, 'file-done-wait-bytes', 4000);
             }
           }
           return;
@@ -1086,7 +1314,14 @@
           lastProgressPercent = -1;
           lastProgressSentTime = 0;
 
+          receiveFinished = false;
           useMemoryReceive = shouldUseMemoryDownload(currentFileMeta.size, batchFileCount);
+          p2pLog('recv', 'FILE_HEADER', {
+            name: currentFileMeta.name,
+            size: currentFileMeta.size,
+            useMemoryReceive,
+            batchFileCount
+          });
           if (useMemoryReceive) {
             writer = null;
             fileWriteStream = null;
@@ -1111,71 +1346,7 @@
         }
 
         if (data.type === 'ALL_END') {
-          let sizeOk = true;
-          const expected = confirmedFileBytes != null
-            ? confirmedFileBytes
-            : (currentFileMeta ? currentFileMeta.size : null);
-
-          if (useMemoryReceive && currentFileMeta) {
-            const savedBytes = triggerBrowserBlobDownload(
-              currentFileMeta.name,
-              memoryParts,
-              currentFileMeta.fileType
-            );
-            memoryParts = [];
-            useMemoryReceive = false;
-            writer = null;
-            fileWriteStream = null;
-            sizeOk = expected == null || savedBytes === totalReceivedSize
-              || (expected != null && totalReceivedSize >= expected * 0.995);
-            if (!sizeOk && totalReceivedSize > 0 && savedBytes === totalReceivedSize) {
-              sizeOk = true;
-            }
-          } else {
-            flushWriteBuffer();
-            await writeChain;
-            if (writer) {
-              sizeOk = await closeCurrentWriter(expected);
-              if (!sizeOk && expected != null && totalReceivedSize > 0) {
-                const shortBy = expected - totalReceivedSize;
-                const ratio = totalReceivedSize / expected;
-                if (shortBy > 0 && ratio >= 0.995) {
-                  console.warn('[P2P Transfer] Minor size shortfall at ALL_END, accepting', {
-                    expected,
-                    received: totalReceivedSize,
-                    shortBy
-                  });
-                  sizeOk = true;
-                }
-              }
-            }
-          }
-
-          receiveProgress.value = 100;
-          if (!sizeOk) {
-            receiveStatus.innerText =
-              'Download finished but size did not match (file may be incomplete). Try sending again.';
-            conn.send({ type: 'ERROR', message: 'Size mismatch' });
-            receiveBtn.disabled = false;
-            return;
-          }
-
-          receiveStatus.innerText = batchFileCount > 1
-            ? `Download complete! ${batchFileCount} files saved.`
-            : 'Download complete! Saved to your browser\'s default download folder.';
-          receiveSpeed.innerText = '';
-          receiveProgress.style.display = 'none';
-          receiveBtn.disabled = false;
-          document.getElementById(`receive-code-${n}`).value = '';
-
-          conn.send({ type: 'PROGRESS', percent: 100 });
-          conn.send({ type: 'ACK' });
-          setTimeout(() => {
-            if (session.receivePeer === receivePeer) {
-              session.receivePeer = null;
-            }
-            receivePeer.destroy();
-          }, 1000);
+          await finishReceiveTransfer(conn, data.retry != null ? `ALL_END:retry${data.retry}` : 'ALL_END');
         }
       }
 
@@ -1221,6 +1392,11 @@
     }
 
     applyDeviceProfileUi();
+    p2pLog('app', 'ready v1.0.10', {
+      ios: isIOSDevice(),
+      mobile: isMobileDevice(),
+      tier: DEVICE_PROFILE.tier
+    });
     console.info('[P2P Transfer] Device profile', DEVICE_PROFILE);
     const networkConn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
     if (networkConn) {
