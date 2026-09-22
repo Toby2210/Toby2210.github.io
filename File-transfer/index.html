@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>P2P Fast Transfer</title>
-  <meta name="version" content="1.0.8">
+  <meta name="version" content="1.0.9">
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="manifest" href="manifest.json">
@@ -419,6 +419,28 @@
       return streamSaver.createWriteStream(filename);
     }
 
+    function shouldUseMemoryDownload(expectedSize, batchFileCount) {
+      if (isMobileDevice()) return false;
+      if (batchFileCount > 1) return false;
+      if (!expectedSize || expectedSize <= 0) return true;
+      return expectedSize <= getMaxZipTotalBytes();
+    }
+
+    function triggerBrowserBlobDownload(filename, parts, mimeType) {
+      const blob = new Blob(parts, { type: mimeType || 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.rel = 'noopener';
+      anchor.style.display = 'none';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return blob.size;
+    }
+
     async function streamSourceOverConn(conn, entry, onOffset) {
       const { name, source, fileType } = toTransferEntry(entry);
       const chunkSize = getChunkSize(conn);
@@ -478,6 +500,7 @@
       if (offset !== totalSize) {
         throw new Error(`Sent ${offset} bytes but expected ${totalSize} for ${name}`);
       }
+      return offset;
     }
 
     let sessionCounter = 0;
@@ -791,12 +814,19 @@
                 ? `Sending file ${i + 1}/${payload.files.length}: ${file.name}...`
                 : 'Sending file...';
 
-              await streamSourceOverConn(conn, file, (fileOffset) => {
+              const bytesSentForFile = await streamSourceOverConn(conn, file, (fileOffset) => {
                 bytesSentTotal = bytesSentBeforeCurrent + fileOffset;
                 if (totalBytes > 0) {
                   sendProgress.value = Math.min(100, Math.round((bytesSentTotal / totalBytes) * 100));
                 }
                 onFileProgress();
+              });
+
+              await drainSendBuffer(conn);
+              conn.send({
+                type: 'FILE_DONE',
+                bytesSent: bytesSentForFile,
+                name: file.name
               });
 
               bytesSentBeforeCurrent += file.size;
@@ -895,6 +925,9 @@
       let writeChain = Promise.resolve();
       let writeBuffer = [];
       let writeBufferLen = 0;
+      let useMemoryReceive = false;
+      let memoryParts = [];
+      let confirmedFileBytes = null;
       const writeBatchSize = getReceiveWriteBatchSize();
       const progressStep = DEVICE_PROFILE.transfer.progressStep;
       const progressIntervalMs = DEVICE_PROFILE.transfer.progressIntervalMs;
@@ -913,13 +946,25 @@
       }
 
       function queueChunkWrite(u8) {
+        if (useMemoryReceive) {
+          memoryParts.push(u8);
+          return;
+        }
         if (!writer) return;
         writeBuffer.push(u8);
         writeBufferLen += u8.byteLength;
         if (writeBufferLen >= writeBatchSize) flushWriteBuffer();
       }
 
+      function expectedReceiveBytes() {
+        if (confirmedFileBytes != null) return confirmedFileBytes;
+        return currentFileMeta ? currentFileMeta.size : 0;
+      }
+
       async function closeCurrentWriter(expectedSize) {
+        if (useMemoryReceive) {
+          return expectedSize == null || totalReceivedSize === expectedSize;
+        }
         flushWriteBuffer();
         await writeChain;
         if (!writer) return true;
@@ -958,7 +1003,7 @@
           totalReceivedSize += byteLength;
           batchBytesReceived += byteLength;
 
-          if (writer) {
+          if (useMemoryReceive || writer) {
             queueChunkWrite(toUint8Array(data));
           }
 
@@ -967,24 +1012,21 @@
           if (now - lastTime >= 500) {
             const diffBytes = batchBytesTotal > 0 ? batchBytesReceived - lastReceived : totalReceivedSize - lastReceived;
             recvSpeed = diffBytes / ((now - lastTime) / 1000);
+            const expectedBytes = expectedReceiveBytes();
             const remainingBytes = batchBytesTotal > 0
               ? batchBytesTotal - batchBytesReceived
-              : (currentFileMeta ? currentFileMeta.size - totalReceivedSize : 0);
+              : (expectedBytes > 0 ? expectedBytes - totalReceivedSize : 0);
             const etaSec = recvSpeed > 0 ? Math.ceil(remainingBytes / recvSpeed) : 0;
             receiveSpeed.innerText = `Speed: ${formatSpeed(recvSpeed)} | ETA: ${formatEta(etaSec)}`;
             lastTime = now;
             lastReceived = batchBytesTotal > 0 ? batchBytesReceived : totalReceivedSize;
           }
 
-          if (currentFileMeta && currentFileMeta.size > 0) {
+          const expectedBytes = expectedReceiveBytes();
+          if (currentFileMeta && expectedBytes > 0) {
             const progress = batchBytesTotal > 0
               ? Math.min(99, Math.floor((batchBytesReceived / batchBytesTotal) * 100))
-              : Math.min(
-                99,
-                currentFileMeta.size > 0
-                  ? Math.floor((totalReceivedSize / currentFileMeta.size) * 100)
-                  : 0
-              );
+              : Math.min(99, Math.floor((totalReceivedSize / expectedBytes) * 100));
             receiveProgress.value = progress;
             const fileLabel = batchFileCount > 1
               ? ` (file ${batchFileIndex}/${batchFileCount})`
@@ -993,7 +1035,7 @@
 
             const atEnd = batchBytesTotal > 0
               ? batchBytesReceived >= batchBytesTotal
-              : totalReceivedSize >= currentFileMeta.size;
+              : totalReceivedSize >= expectedBytes;
             const shouldSendProgress =
               atEnd ||
               progress - lastProgressPercent >= progressStep ||
@@ -1017,11 +1059,26 @@
           return;
         }
 
+        if (data.type === 'FILE_DONE') {
+          if (currentFileMeta && typeof data.bytesSent === 'number') {
+            confirmedFileBytes = data.bytesSent;
+            currentFileMeta.size = data.bytesSent;
+            if (totalReceivedSize >= data.bytesSent) {
+              receiveProgress.value = 100;
+              receiveStatus.innerText = `Finalizing ${currentFileMeta.name}...`;
+              conn.send({ type: 'PROGRESS', percent: 100 });
+            }
+          }
+          return;
+        }
+
         if (data.type === 'FILE_HEADER') {
           await writeChain;
           batchFileIndex += 1;
           currentFileMeta = data;
+          confirmedFileBytes = null;
           totalReceivedSize = 0;
+          memoryParts = [];
           writeChain = Promise.resolve();
           receiveProgress.style.display = 'block';
           lastTime = Date.now();
@@ -1029,9 +1086,16 @@
           lastProgressPercent = -1;
           lastProgressSentTime = 0;
 
-          fileWriteStream = createReceiveWriteStream(currentFileMeta.name);
-          writer = fileWriteStream.getWriter();
-          receiveStatus.innerText = `Downloading ${currentFileMeta.name}... 0%`;
+          useMemoryReceive = shouldUseMemoryDownload(currentFileMeta.size, batchFileCount);
+          if (useMemoryReceive) {
+            writer = null;
+            fileWriteStream = null;
+            receiveStatus.innerText = `Receiving ${currentFileMeta.name}... 0%`;
+          } else {
+            fileWriteStream = createReceiveWriteStream(currentFileMeta.name);
+            writer = fileWriteStream.getWriter();
+            receiveStatus.innerText = `Downloading ${currentFileMeta.name}... 0%`;
+          }
           return;
         }
 
@@ -1047,22 +1111,42 @@
         }
 
         if (data.type === 'ALL_END') {
-          flushWriteBuffer();
-          await writeChain;
           let sizeOk = true;
-          if (writer) {
-            const expected = currentFileMeta ? currentFileMeta.size : null;
-            sizeOk = await closeCurrentWriter(expected);
-            if (!sizeOk && expected != null && totalReceivedSize > 0) {
-              const shortBy = expected - totalReceivedSize;
-              const ratio = totalReceivedSize / expected;
-              if (shortBy > 0 && ratio >= 0.995) {
-                console.warn('[P2P Transfer] Minor size shortfall at ALL_END, accepting', {
-                  expected,
-                  received: totalReceivedSize,
-                  shortBy
-                });
-                sizeOk = true;
+          const expected = confirmedFileBytes != null
+            ? confirmedFileBytes
+            : (currentFileMeta ? currentFileMeta.size : null);
+
+          if (useMemoryReceive && currentFileMeta) {
+            const savedBytes = triggerBrowserBlobDownload(
+              currentFileMeta.name,
+              memoryParts,
+              currentFileMeta.fileType
+            );
+            memoryParts = [];
+            useMemoryReceive = false;
+            writer = null;
+            fileWriteStream = null;
+            sizeOk = expected == null || savedBytes === totalReceivedSize
+              || (expected != null && totalReceivedSize >= expected * 0.995);
+            if (!sizeOk && totalReceivedSize > 0 && savedBytes === totalReceivedSize) {
+              sizeOk = true;
+            }
+          } else {
+            flushWriteBuffer();
+            await writeChain;
+            if (writer) {
+              sizeOk = await closeCurrentWriter(expected);
+              if (!sizeOk && expected != null && totalReceivedSize > 0) {
+                const shortBy = expected - totalReceivedSize;
+                const ratio = totalReceivedSize / expected;
+                if (shortBy > 0 && ratio >= 0.995) {
+                  console.warn('[P2P Transfer] Minor size shortfall at ALL_END, accepting', {
+                    expected,
+                    received: totalReceivedSize,
+                    shortBy
+                  });
+                  sizeOk = true;
+                }
               }
             }
           }
@@ -1117,14 +1201,14 @@
             .then(() => handleIncomingMessage(conn, data))
             .catch((err) => {
               console.error(err);
-              if (writer) writer.abort().catch(() => {});
+              if (writer && !useMemoryReceive) writer.abort().catch(() => {});
               receiveStatus.innerText = 'Receive error: ' + (err.message || err);
               receiveBtn.disabled = false;
             });
         });
 
         conn.on('error', () => {
-          if (writer) writer.abort().catch(() => {});
+          if (writer && !useMemoryReceive) writer.abort().catch(() => {});
           receiveStatus.innerText = 'Connection lost.';
           receiveBtn.disabled = false;
         });
