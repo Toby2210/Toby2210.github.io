@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>P2P Fast Transfer</title>
-  <meta name="version" content="1.0.7">
+  <meta name="version" content="1.0.8">
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="manifest" href="manifest.json">
@@ -85,6 +85,10 @@
       return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
     }
 
+    function isIOSDevice() {
+      return /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    }
+
     function getNetworkInfo() {
       const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
       if (!conn) {
@@ -134,6 +138,7 @@
 
       const chunkSize = (() => {
         if (mobile) {
+          if (isIOSDevice()) return 64 * 1024;
           if (tier === 'high' && deviceMemoryGB != null && deviceMemoryGB >= 4) return 512 * 1024;
           if (tier === 'medium') return 384 * 1024;
           return 256 * 1024;
@@ -225,8 +230,16 @@
         `Buffer ${Math.round(t.maxBufferedAmount / (1024 * 1024))} MB`;
     }
 
-    function getChunkSize() {
-      return DEVICE_PROFILE.transfer.chunkSize;
+    function getChunkSize(conn) {
+      let size = DEVICE_PROFILE.transfer.chunkSize;
+      const dc = conn?.dataChannel;
+      if (dc && typeof dc.maxMessageSize === 'number' && dc.maxMessageSize > 0) {
+        size = Math.min(size, dc.maxMessageSize);
+      }
+      if (isIOSDevice()) {
+        size = Math.min(size, 64 * 1024);
+      }
+      return Math.max(16 * 1024, size);
     }
 
     function getMaxBufferedAmount() {
@@ -347,10 +360,6 @@
       };
     }
 
-    async function readFileSlice(file, start, end) {
-      return file.slice(start, end).arrayBuffer();
-    }
-
     function uniqueZipEntryName(name, usedNames) {
       const base = (name && String(name).trim()) || 'file';
       if (!usedNames.has(base)) {
@@ -370,6 +379,16 @@
       return candidate;
     }
 
+    function toTransferEntry(fileOrEntry) {
+      if (fileOrEntry && fileOrEntry.source) return fileOrEntry;
+      return {
+        name: fileOrEntry.name,
+        size: fileOrEntry.size,
+        source: fileOrEntry,
+        fileType: fileOrEntry.type || 'application/octet-stream'
+      };
+    }
+
     async function buildZipBlobFromFiles(files, onProgress) {
       const zip = new JSZip();
       const usedNames = new Set();
@@ -386,58 +405,78 @@
       if (entries.length === 0) {
         throw new Error('Could not read any selected files for ZIP (try fewer files or send again).');
       }
-      return zip.generateAsync(
-        { type: 'blob', compression: 'STORE', streamFiles: true },
-        onProgress
-      );
+      const zipOptions = isIOSDevice() || isMobileDevice()
+        ? { type: 'uint8array', compression: 'STORE' }
+        : { type: 'blob', compression: 'STORE', streamFiles: true };
+      const generated = await zip.generateAsync(zipOptions, onProgress);
+      if (generated instanceof Blob) {
+        return generated;
+      }
+      return new Blob([generated], { type: 'application/zip' });
     }
 
     function createReceiveWriteStream(filename) {
       return streamSaver.createWriteStream(filename);
     }
 
-    async function streamFileOverConn(conn, file, onOffset) {
-      const chunkSize = getChunkSize();
-      const readAhead = DEVICE_PROFILE.transfer.readAheadChunks;
+    async function streamSourceOverConn(conn, entry, onOffset) {
+      const { name, source, fileType } = toTransferEntry(entry);
+      const chunkSize = getChunkSize(conn);
+      const readAhead = isIOSDevice() ? 1 : DEVICE_PROFILE.transfer.readAheadChunks;
+      const totalSize = typeof entry.size === 'number' ? entry.size : source.size;
+      if (!totalSize || totalSize <= 0) {
+        throw new Error(`Cannot send empty file: ${name}`);
+      }
+
       conn.send({
         type: 'FILE_HEADER',
-        name: file.name,
-        size: file.size,
-        fileType: file.type || 'application/octet-stream'
+        name,
+        size: totalSize,
+        fileType: fileType || 'application/octet-stream'
       });
 
       const dc = conn.dataChannel;
       let offset = 0;
-      let nextRead = readFileSlice(file, 0, Math.min(chunkSize, file.size));
+
+      const readSlice = (start, end) => source.slice(start, end).arrayBuffer();
+
+      let nextRead = readSlice(0, Math.min(chunkSize, totalSize));
       let aheadRead = null;
-      if (readAhead > 1 && file.size > chunkSize) {
-        aheadRead = readFileSlice(file, chunkSize, Math.min(chunkSize * 2, file.size));
+      if (readAhead > 1 && totalSize > chunkSize) {
+        aheadRead = readSlice(chunkSize, Math.min(chunkSize * 2, totalSize));
       }
 
-      while (offset < file.size) {
-        while (offset < file.size && (!dc || dc.bufferedAmount <= getMaxBufferedAmount())) {
-          const end = Math.min(offset + chunkSize, file.size);
+      while (offset < totalSize) {
+        while (offset < totalSize && (!dc || dc.bufferedAmount <= getMaxBufferedAmount())) {
           const buffer = await nextRead;
+          const chunkLen = buffer.byteLength;
+          if (chunkLen === 0) {
+            throw new Error(`Read failed at byte ${offset} for ${name} (Safari/iOS blob read)`);
+          }
           conn.send(buffer);
-          offset = end;
+          offset += chunkLen;
           if (onOffset) onOffset(offset);
 
-          if (offset < file.size) {
-            if (aheadRead) {
-              nextRead = aheadRead;
-              const aheadStart = offset + chunkSize;
-              aheadRead = aheadStart < file.size
-                ? readFileSlice(file, aheadStart, Math.min(aheadStart + chunkSize, file.size))
-                : null;
-            } else {
-              const nextEnd = Math.min(offset + chunkSize, file.size);
-              nextRead = readFileSlice(file, offset, nextEnd);
-            }
+          if (offset >= totalSize) break;
+
+          if (aheadRead) {
+            nextRead = aheadRead;
+            const aheadStart = offset + chunkSize;
+            aheadRead = aheadStart < totalSize
+              ? readSlice(aheadStart, Math.min(aheadStart + chunkSize, totalSize))
+              : null;
+          } else {
+            const nextEnd = Math.min(offset + chunkSize, totalSize);
+            nextRead = readSlice(offset, nextEnd);
           }
         }
-        if (offset < file.size) {
+        if (offset < totalSize) {
           await waitForBufferLow(conn);
         }
+      }
+
+      if (offset !== totalSize) {
+        throw new Error(`Sent ${offset} bytes but expected ${totalSize} for ${name}`);
       }
     }
 
@@ -669,7 +708,7 @@
       const preparePayloadPromise = (async () => {
         if (files.length === 1) {
           sendStatus.innerText = 'Waiting for recipient...';
-          return { mode: 'single', files: [files[0]] };
+          return { mode: 'single', files: [toTransferEntry(files[0])] };
         }
 
         const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
@@ -688,8 +727,16 @@
             sendStatus.innerText = 'ZIP ready. Waiting for recipient...';
             sendProgress.style.display = 'none';
 
-            const zipFile = new File([zipBlob], `archive_${Date.now()}.zip`, { type: 'application/octet-stream' });
-            return { mode: 'single', files: [zipFile] };
+            const zipName = `archive_${Date.now()}.zip`;
+            return {
+              mode: 'single',
+              files: [{
+                name: zipName,
+                size: zipBlob.size,
+                source: zipBlob,
+                fileType: 'application/zip'
+              }]
+            };
           } catch (err) {
             console.warn('ZIP packaging failed, falling back to sequential send:', err);
             sendProgress.style.display = 'none';
@@ -699,7 +746,7 @@
           sendStatus.innerText = `Large bundle (${files.length} files). Will send sequentially without ZIP...`;
         }
 
-        return { mode: 'multi', files };
+        return { mode: 'multi', files: files.map(toTransferEntry) };
       })();
 
       session.sendPeer.on('connection', (conn) => {
@@ -744,7 +791,7 @@
                 ? `Sending file ${i + 1}/${payload.files.length}: ${file.name}...`
                 : 'Sending file...';
 
-              await streamFileOverConn(conn, file, (fileOffset) => {
+              await streamSourceOverConn(conn, file, (fileOffset) => {
                 bytesSentTotal = bytesSentBeforeCurrent + fileOffset;
                 if (totalBytes > 0) {
                   sendProgress.value = Math.min(100, Math.round((bytesSentTotal / totalBytes) * 100));
@@ -1000,10 +1047,24 @@
         }
 
         if (data.type === 'ALL_END') {
+          flushWriteBuffer();
           await writeChain;
           let sizeOk = true;
           if (writer) {
-            sizeOk = await closeCurrentWriter(currentFileMeta ? currentFileMeta.size : null);
+            const expected = currentFileMeta ? currentFileMeta.size : null;
+            sizeOk = await closeCurrentWriter(expected);
+            if (!sizeOk && expected != null && totalReceivedSize > 0) {
+              const shortBy = expected - totalReceivedSize;
+              const ratio = totalReceivedSize / expected;
+              if (shortBy > 0 && ratio >= 0.995) {
+                console.warn('[P2P Transfer] Minor size shortfall at ALL_END, accepting', {
+                  expected,
+                  received: totalReceivedSize,
+                  shortBy
+                });
+                sizeOk = true;
+              }
+            }
           }
 
           receiveProgress.value = 100;
@@ -1023,6 +1084,7 @@
           receiveBtn.disabled = false;
           document.getElementById(`receive-code-${n}`).value = '';
 
+          conn.send({ type: 'PROGRESS', percent: 100 });
           conn.send({ type: 'ACK' });
           setTimeout(() => {
             if (session.receivePeer === receivePeer) {
