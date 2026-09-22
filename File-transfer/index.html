@@ -3,8 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>P2P Fast Transfer</title>
   <meta name="version" content="1.0.10">
+  <title>P2P Fast Transfer</title>
+  <script>
+    (function () {
+      var el = document.querySelector('meta[name="version"]');
+      if (el && el.content) document.title = 'P2P Fast Transfer v' + el.content;
+    })();
+  </script>
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="manifest" href="manifest.json">
@@ -72,6 +78,8 @@
     if (typeof streamSaver !== 'undefined') {
       streamSaver.mitm = new URL('mitm.html', window.location.href).href;
     }
+
+    const APP_VERSION = document.querySelector('meta[name="version"]')?.content || 'dev';
 
     const P2P_DEBUG = true;
     function p2pLog(side, event, detail) {
@@ -1392,7 +1400,7 @@
     }
 
     applyDeviceProfileUi();
-    p2pLog('app', 'ready v1.0.10', {
+    p2pLog('app', `ready v${APP_VERSION}`, {
       ios: isIOSDevice(),
       mobile: isMobileDevice(),
       tier: DEVICE_PROFILE.tier
