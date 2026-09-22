@@ -5,12 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="version" content="1.0.10">
   <title>P2P Fast Transfer</title>
-  <script>
-    (function () {
-      var el = document.querySelector('meta[name="version"]');
-      if (el && el.content) document.title = 'P2P Fast Transfer v' + el.content;
-    })();
-  </script>
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="manifest" href="manifest.json">
@@ -65,7 +59,7 @@
 
   <div class="page-header">
     <div>
-      <h2>P2P Fast Transfer</h2>
+      <h2 id="app-title">P2P Fast Transfer</h2>
       <p class="device-profile-hint" id="device-profile-hint">Detecting device…</p>
     </div>
   </div>
@@ -80,6 +74,18 @@
     }
 
     const APP_VERSION = document.querySelector('meta[name="version"]')?.content || 'dev';
+    const P2P_APP_NAME = 'P2P Fast Transfer';
+
+    function formatAppTitle(version = APP_VERSION) {
+      return version && version !== 'dev' ? `${P2P_APP_NAME} v${version}` : P2P_APP_NAME;
+    }
+
+    function applyAppVersionUi() {
+      const title = formatAppTitle();
+      document.title = title;
+      const heading = document.getElementById('app-title');
+      if (heading) heading.textContent = title;
+    }
 
     const P2P_DEBUG = true;
     function p2pLog(side, event, detail) {
@@ -1399,6 +1405,7 @@
       });
     }
 
+    applyAppVersionUi();
     applyDeviceProfileUi();
     p2pLog('app', `ready v${APP_VERSION}`, {
       ios: isIOSDevice(),
