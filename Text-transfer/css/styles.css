@@ -367,6 +367,9 @@ h2 {
     padding: 25px;
     border-radius: 15px;
     margin-top: 20px;
+    overflow-x: hidden;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .scan-result h3 {
@@ -381,17 +384,37 @@ h2 {
     border-radius: 10px;
     margin-bottom: 15px;
     max-height: 300px;
+    max-width: 100%;
+    overflow-x: hidden;
     overflow-y: auto;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+    box-sizing: border-box;
 }
 
 #result-content.text-content {
     white-space: pre-wrap;
     word-wrap: break-word;
+    overflow-wrap: anywhere;
 }
 
 #result-content.rich-content {
     line-height: 1.6;
     word-wrap: break-word;
+    overflow-wrap: anywhere;
+}
+
+#result-content.rich-content img,
+#result-content.rich-content table,
+#result-content.rich-content pre {
+    max-width: 100%;
+    height: auto;
+}
+
+#result-content.rich-content table {
+    width: 100%;
+    table-layout: fixed;
+    word-break: break-word;
 }
 
 #result-content.rich-content ul,

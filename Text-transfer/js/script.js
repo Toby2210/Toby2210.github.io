@@ -51,7 +51,6 @@ const newMessageBtn = document.getElementById('new-message');
 const startScannerBtn = document.getElementById('start-scanner');
 const scannerContainer = document.getElementById('scanner-container');
 const scannerPlaceholder = document.getElementById('scanner-placeholder');
-const videoElement = document.getElementById('video');
 const scanResult = document.getElementById('scan-result');
 const resultContent = document.getElementById('result-content');
 const copyResultBtn = document.getElementById('copy-result');
@@ -218,6 +217,44 @@ function resetQrChunkCollection() {
     multiQrProgressText.textContent = 'Receiving flashing QR… 0 / 0 frames captured';
 }
 
+async function copyFormattedHtml(html, plain) {
+    const plainText = plain || stripHtmlToPlain(html);
+    const htmlBlob = new Blob(
+        [`<!DOCTYPE html><html><body><!--StartFragment-->${html}<!--EndFragment--></body></html>`],
+        { type: 'text/html' }
+    );
+    const textBlob = new Blob([plainText], { type: 'text/plain' });
+
+    if (navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+        try {
+            await navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/html': htmlBlob,
+                    'text/plain': textBlob
+                })
+            ]);
+            return;
+        } catch (err) {
+            console.warn('ClipboardItem failed, trying fallback:', err);
+        }
+    }
+
+    const el = document.createElement('div');
+    el.contentEditable = 'true';
+    el.innerHTML = html;
+    el.style.position = 'fixed';
+    el.style.left = '-9999px';
+    document.body.appendChild(el);
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    document.execCommand('copy');
+    sel.removeAllRanges();
+    el.remove();
+}
+
 function displayPayload(payload) {
     const normalized = normalizePayload(payload);
     scanResult.style.display = 'block';
@@ -228,14 +265,16 @@ function displayPayload(payload) {
             USE_PROFILES: { html: true }
         });
         resultContent.innerHTML = clean;
+        copyResultBtn.textContent = 'Copy formatted text';
         copyResultBtn.onclick = () => {
-            navigator.clipboard.writeText(normalized.t || stripHtmlToPlain(clean)).then(() => {
-                showToast('Plain text copied!');
-            });
+            copyFormattedHtml(clean, normalized.t || stripHtmlToPlain(clean))
+                .then(() => showToast('Formatted text copied!'))
+                .catch(() => showToast('Copy failed'));
         };
     } else {
         resultContent.className = 'text-content';
         resultContent.innerHTML = `<p>${escapeHtml(normalized.t)}</p>`;
+        copyResultBtn.textContent = 'Copy text';
         copyResultBtn.onclick = () => {
             navigator.clipboard.writeText(normalized.t).then(() => {
                 showToast('Message copied!');
@@ -304,6 +343,14 @@ function startQrFlash(frames) {
     }, QR_FLASH_MS);
 }
 
+function updateDownloadQrButtonLabel() {
+    if (qrChunks.length > 1) {
+        downloadQrBtn.textContent = 'Download GIF';
+    } else {
+        downloadQrBtn.textContent = 'Download QR (PNG)';
+    }
+}
+
 function renderSingleQr(data) {
     qrCodeContainer.innerHTML = '';
     qrCodeContainer.dataset.qrData = data;
@@ -311,6 +358,7 @@ function renderSingleQr(data) {
     stopQrFlash();
     setFlashUi(false);
     qrChunkInfo.textContent = 'Single QR code — easy to scan.';
+    updateDownloadQrButtonLabel();
 }
 
 function renderFlashingQr() {
@@ -328,8 +376,226 @@ function renderFlashingQr() {
 
     qrCodeContainer.appendChild(stage);
     qrChunkInfo.textContent =
-        `Long message uses flashing QR (${qrChunks.length} frames). Receiver scans continuously until done.`;
+        `Long message uses flashing QR (${qrChunks.length} frames). Receiver scans continuously, or upload the GIF.`;
     startQrFlash(stage.querySelectorAll('.qr-flash-frame'));
+    updateDownloadQrButtonLabel();
+}
+
+function restoreScannerContainerDom() {
+    if (!scannerContainer) return;
+    scannerContainer.innerHTML = `
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas" style="display: none;"></canvas>
+    `;
+}
+
+function restoreReceiveQrUi() {
+    document.getElementById('receive-qr-panel')?.classList.toggle('hidden', currentReceiveMode !== 'qr');
+    document.getElementById('receive-pair-panel')?.classList.toggle('hidden', currentReceiveMode !== 'pair');
+
+    if (currentReceiveMode !== 'qr') {
+        if (unifiedScanner) unifiedScanner.style.display = 'none';
+        return;
+    }
+
+    if (unifiedScanner) unifiedScanner.style.display = 'block';
+
+    if (currentScanMethod === 'camera') {
+        cameraScanner.style.display = 'block';
+        uploadScanner.style.display = 'none';
+        restoreScannerContainerDom();
+        startScannerBtn.style.display = 'block';
+        scannerContainer.style.display = 'block';
+        if (scannerPlaceholder) scannerPlaceholder.style.display = 'block';
+        if (openCameraBtn) openCameraBtn.style.display = 'none';
+    } else {
+        cameraScanner.style.display = 'none';
+        uploadScanner.style.display = 'block';
+        startScannerBtn.style.display = 'none';
+        scannerContainer.style.display = 'none';
+        if (scannerPlaceholder) scannerPlaceholder.style.display = 'none';
+        if (openCameraBtn) openCameraBtn.style.display = 'none';
+    }
+}
+
+async function stopScannerAndResetUi() {
+    if (html5Qrcode && html5Qrcode.isRunning) {
+        try {
+            await html5Qrcode.stop();
+        } catch (err) {
+            console.warn(err);
+        }
+    }
+    html5Qrcode = null;
+    restoreScannerContainerDom();
+}
+
+function renderQrDataToCanvas(data) {
+    return new Promise((resolve, reject) => {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'position:fixed;left:-9999px;top:0;';
+        document.body.appendChild(wrap);
+        buildQrCodeInto(wrap, data);
+
+        const drawFromImage = (img) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 280;
+            canvas.height = 280;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 280, 280);
+            ctx.drawImage(img, 0, 0, 280, 280);
+            wrap.remove();
+            resolve(canvas);
+        };
+
+        const deadline = Date.now() + 10000;
+        const tick = () => {
+            const srcCanvas = wrap.querySelector('canvas');
+            if (srcCanvas && srcCanvas.width > 0) {
+                drawFromImage(srcCanvas);
+                return;
+            }
+            const img = wrap.querySelector('img');
+            if (img) {
+                if (img.complete && img.naturalWidth > 0) {
+                    drawFromImage(img);
+                    return;
+                }
+                img.onload = () => drawFromImage(img);
+                img.onerror = () => {
+                    wrap.remove();
+                    reject(new Error('QR image load failed'));
+                };
+                return;
+            }
+            if (Date.now() > deadline) {
+                wrap.remove();
+                reject(new Error('QR render timeout'));
+                return;
+            }
+            requestAnimationFrame(tick);
+        };
+        tick();
+    });
+}
+
+async function downloadQrAsGif() {
+    if (typeof GIF === 'undefined') {
+        showToast('GIF encoder not loaded');
+        return;
+    }
+    downloadQrBtn.disabled = true;
+    downloadQrBtn.textContent = 'Building GIF…';
+    try {
+        const gif = new GIF({
+            workers: 0,
+            quality: 10,
+            width: 280,
+            height: 280
+        });
+        for (let i = 0; i < qrChunks.length; i++) {
+            const canvas = await renderQrDataToCanvas(qrChunks[i]);
+            gif.addFrame(canvas, { copy: true, delay: QR_FLASH_MS });
+        }
+        const blob = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('GIF render timeout')), 120000);
+            gif.on('finished', (b) => {
+                clearTimeout(timer);
+                resolve(b);
+            });
+            gif.on('abort', () => {
+                clearTimeout(timer);
+                reject(new Error('GIF aborted'));
+            });
+            gif.render();
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `text-transfer-qr-${qrChunks.length}-frames.gif`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        showToast('GIF saved!');
+    } catch (err) {
+        console.error(err);
+        showToast('Failed to create GIF: ' + (err.message || err));
+    } finally {
+        downloadQrBtn.disabled = false;
+        updateDownloadQrButtonLabel();
+    }
+}
+
+function getGifReaderCtor() {
+    if (typeof GifReader !== 'undefined') return GifReader;
+    if (typeof omggif !== 'undefined' && omggif.GifReader) return omggif.GifReader;
+    return null;
+}
+
+function decodeGifToCanvases(arrayBuffer) {
+    const GifReaderCtor = getGifReaderCtor();
+    if (!GifReaderCtor) throw new Error('GIF decoder not loaded');
+    const r = new GifReaderCtor(new Uint8Array(arrayBuffer));
+    const w = r.width;
+    const h = r.height;
+    const pixels = new Uint8Array(w * h * 4);
+    const canvases = [];
+    for (let i = 0; i < r.numFrames(); i++) {
+        const info = r.frameInfo(i);
+        if (info.disposal === 2) pixels.fill(0);
+        r.decodeAndBlitFrameRGBA(i, pixels);
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const imgData = new ImageData(new Uint8ClampedArray(pixels.slice()), w, h);
+        canvas.getContext('2d').putImageData(imgData, 0, 0);
+        canvases.push(canvas);
+    }
+    return canvases;
+}
+
+async function scanGifFile(file) {
+    uploadPreview.innerHTML = '<p style="color: white;">Scanning GIF frames…</p>';
+    html5Qrcode = new Html5Qrcode('scanner-container');
+    try {
+        const canvases = decodeGifToCanvases(await file.arrayBuffer());
+        let scanned = 0;
+        for (let i = 0; i < canvases.length; i++) {
+            const blob = await new Promise((res) => canvases[i].toBlob(res, 'image/png'));
+            if (!blob) continue;
+            try {
+                const text = await html5Qrcode.scanFile(blob, true);
+                onScanSuccess(text);
+                scanned++;
+            } catch {
+                /* frame without readable QR */
+            }
+        }
+        if (scanned === 0) {
+            showToast('No QR codes found in GIF');
+            restoreUploadPreviewAfterScan(file);
+        } else {
+            uploadPreview.innerHTML = `<p style="color:white;">Scanned ${scanned} frame(s) from GIF.</p>`;
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('Failed to read GIF');
+        restoreUploadPreviewAfterScan(file);
+    }
+}
+
+function restoreUploadPreviewAfterScan(file) {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        uploadPreview.dataset.imageSrc = event.target.result;
+        uploadPreview.innerHTML = `
+            <img src="${event.target.result}" alt="Uploaded" style="max-width: 100%; max-height: 300px; display: block; margin-bottom: 15px;">
+            <button id="scan-qr-btn" class="primary-btn">Scan again</button>
+        `;
+    };
+    reader.readAsDataURL(file);
 }
 
 function showGeneratedQr(compressed) {
@@ -451,8 +717,7 @@ document.querySelectorAll('.receive-mode-selector .method-btn').forEach(btn => {
         document.querySelectorAll('.receive-mode-selector .method-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentReceiveMode = btn.dataset.receiveMode;
-        document.getElementById('receive-qr-panel').classList.toggle('hidden', currentReceiveMode !== 'qr');
-        document.getElementById('receive-pair-panel').classList.toggle('hidden', currentReceiveMode !== 'pair');
+        restoreReceiveQrUi();
     });
 });
 
@@ -474,32 +739,11 @@ tabBtns.forEach(btn => {
         btn.classList.add('active');
         document.getElementById(`${tab}-tab`).classList.add('active');
 
-        if (tab !== 'receiver' && html5Qrcode && html5Qrcode.isRunning) {
-            html5Qrcode.stop().then(() => { html5Qrcode = null; }).catch(console.error);
-        } else if (tab !== 'receiver') {
-            html5Qrcode = null;
-        }
-
-        if (tab === 'receiver') {
-            if (unifiedScanner) unifiedScanner.style.display = currentReceiveMode === 'qr' ? 'block' : 'none';
-            if (currentReceiveMode === 'qr') {
-                if (currentScanMethod === 'camera') {
-                    cameraScanner.style.display = 'block';
-                    uploadScanner.style.display = 'none';
-                } else {
-                    cameraScanner.style.display = 'none';
-                    uploadScanner.style.display = 'block';
-                }
-                startScannerBtn.style.display = currentScanMethod === 'camera' ? 'block' : 'none';
-                scannerContainer.style.display = currentScanMethod === 'camera' ? 'block' : 'none';
-            }
-            if (openCameraBtn) openCameraBtn.style.display = 'none';
+        if (tab !== 'receiver') {
+            stopScannerAndResetUi();
+        } else {
+            restoreReceiveQrUi();
             if (scanResult) scanResult.style.display = 'block';
-            if (scannerPlaceholder) {
-                scannerPlaceholder.style.display = (!html5Qrcode || html5Qrcode.isRunning === false) ? 'block' : 'none';
-            }
-        } else if (unifiedScanner) {
-            unifiedScanner.style.display = 'none';
         }
     });
 });
@@ -516,32 +760,21 @@ methodBtns.forEach(btn => {
         if (method === 'camera') {
             cameraScanner.style.display = 'block';
             uploadScanner.style.display = 'none';
-            if (html5Qrcode && html5Qrcode.isRunning) {
-                html5Qrcode.stop().then(() => { html5Qrcode = null; }).catch(console.error);
-            } else {
-                html5Qrcode = null;
-            }
+            stopScannerAndResetUi();
             startScannerBtn.style.display = 'block';
             scannerContainer.style.display = 'block';
             uploadPreview.innerHTML = '';
             uploadFile.value = '';
             uploadedFile = null;
-            videoElement.src = '';
-            videoElement.pause();
+            restoreScannerContainerDom();
             if (scannerPlaceholder) scannerPlaceholder.style.display = 'block';
             if (openCameraBtn) openCameraBtn.style.display = 'none';
         } else {
             cameraScanner.style.display = 'none';
             uploadScanner.style.display = 'block';
-            if (html5Qrcode && html5Qrcode.isRunning) {
-                html5Qrcode.stop().then(() => { html5Qrcode = null; }).catch(console.error);
-            } else {
-                html5Qrcode = null;
-            }
+            stopScannerAndResetUi();
             startScannerBtn.style.display = 'none';
             scannerContainer.style.display = 'none';
-            videoElement.src = '';
-            videoElement.pause();
             if (openCameraBtn) openCameraBtn.style.display = 'none';
         }
     });
@@ -740,11 +973,15 @@ receivePairBtn.addEventListener('click', () => {
 });
 
 downloadQrBtn.addEventListener('click', () => {
+    if (qrChunks.length > 1) {
+        downloadQrAsGif();
+        return;
+    }
     const qrImg = qrCodeContainer.querySelector('img');
     if (qrImg && qrImg.src) {
         const link = document.createElement('a');
         link.href = qrImg.src;
-        link.download = `text-transfer-qr-${qrChunkIndex + 1}-of-${qrChunks.length}.png`;
+        link.download = `text-transfer-qr.png`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -781,12 +1018,15 @@ uploadFile.addEventListener('change', (e) => {
 });
 
 document.addEventListener('click', (e) => {
-    if (e.target.id === 'scan-qr-btn') {
-        const imageSrc = uploadPreview.dataset.imageSrc;
-        if (imageSrc) {
-            e.target.textContent = 'Scanning...';
-            e.target.disabled = true;
-            scanUploadedImage(imageSrc);
+    if (e.target.id === 'scan-qr-btn' && uploadedFile) {
+        e.target.textContent = 'Scanning...';
+        e.target.disabled = true;
+        if (uploadedFile.type === 'image/gif') {
+            scanGifFile(uploadedFile).finally(() => {
+                uploadFile.value = '';
+            });
+        } else {
+            scanUploadedImage(uploadPreview.dataset.imageSrc);
         }
     }
 });
@@ -800,7 +1040,7 @@ function scanUploadedImage(imageSrc) {
         uploadPreview.dataset.imageSrc = imageSrc;
         uploadPreview.innerHTML = `
             <img src="${imageSrc}" alt="Uploaded image" style="max-width: 100%; max-height: 300px; display: block; margin-bottom: 15px;">
-            <button id="scan-qr-btn" class="primary-btn">Scan QR Code</button>
+            <button id="scan-qr-btn" class="primary-btn">Scan again</button>
         `;
         uploadFile.value = '';
         uploadedFile = null;
@@ -827,7 +1067,15 @@ startScannerBtn.addEventListener('click', () => {
 
 function stopScannerIfRunning() {
     if (html5Qrcode && html5Qrcode.isRunning) {
-        return html5Qrcode.stop().then(() => { html5Qrcode = null; }).catch(() => { html5Qrcode = null; });
+        return html5Qrcode.stop()
+            .then(() => {
+                html5Qrcode = null;
+                restoreScannerContainerDom();
+            })
+            .catch(() => {
+                html5Qrcode = null;
+                restoreScannerContainerDom();
+            });
     }
     html5Qrcode = null;
     return Promise.resolve();
@@ -863,14 +1111,10 @@ function onScanSuccess(decodedText) {
 function onScanFailure() {}
 
 function restartCamera() {
-    if (html5Qrcode && html5Qrcode.isRunning) {
-        html5Qrcode.stop().then(() => {
-            html5Qrcode = null;
-            startScanner();
-        }).catch(() => startScanner());
-    } else {
+    stopScannerAndResetUi().then(() => {
+        restoreReceiveQrUi();
         startScanner();
-    }
+    });
 }
 
 function startScanner() {
