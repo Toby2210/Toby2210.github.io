@@ -34,6 +34,13 @@ h1 {
     font-size: 0.95rem;
 }
 
+.app-version {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.8rem;
+    color: #999;
+}
+
 .hidden {
     display: none !important;
 }

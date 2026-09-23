@@ -1,5 +1,19 @@
 // Text Transfer — QR (chunked flashing) + PeerJS 6-digit pairing
 
+const APP_VERSION = document.querySelector('meta[name="version"]')?.content || 'dev';
+
+function applyAppVersionUi() {
+    const label =
+        APP_VERSION && APP_VERSION !== 'dev' ? `Text Transfer v${APP_VERSION}` : 'Text Transfer';
+    document.title = label;
+    const versionEl = document.getElementById('app-version');
+    if (versionEl && APP_VERSION && APP_VERSION !== 'dev') {
+        versionEl.textContent = `Version ${APP_VERSION}`;
+    }
+}
+
+applyAppVersionUi();
+
 const TT_PROTOCOL = 'ttqr';
 const QR_CHUNK_MAX = 420;
 const QR_FLASH_MS = 320;
@@ -13,6 +27,7 @@ const ICE_SERVERS = [
 ];
 
 let html5Qrcode = null;
+let cameraScannerActive = false;
 let currentScanMethod = 'camera';
 let uploadedFiles = [];
 let currentFormat = 'plain';
@@ -282,7 +297,9 @@ function displayPayload(payload) {
         };
     }
 
-    if (openCameraBtn && currentScanMethod === 'camera') {
+    if (currentReceiveMode === 'qr' && currentScanMethod === 'camera') {
+        stopCameraScannerAfterResult();
+    } else if (openCameraBtn && currentScanMethod === 'camera') {
         openCameraBtn.style.display = 'inline-block';
     }
 }
@@ -376,7 +393,7 @@ function renderFlashingQr() {
 
     qrCodeContainer.appendChild(stage);
     qrChunkInfo.textContent =
-        `Long message uses flashing QR (${qrChunks.length} frames). Scan with camera, or upload all PNG images / a GIF.`;
+        `Long message uses flashing QR (${qrChunks.length} frames). Scan with camera, or upload the ZIP / PNGs / GIF.`;
     startQrFlash(stage.querySelectorAll('.qr-flash-frame'));
     updateDownloadQrButtonLabel();
 }
@@ -418,16 +435,32 @@ function restoreReceiveQrUi() {
     }
 }
 
+function isHtml5QrcodeCameraScanning() {
+    if (!html5Qrcode || !cameraScannerActive) return false;
+    if (typeof html5Qrcode.isScanning === 'function') return html5Qrcode.isScanning();
+    return true;
+}
+
 async function stopScannerAndResetUi() {
-    if (html5Qrcode && html5Qrcode.isRunning) {
+    if (html5Qrcode && isHtml5QrcodeCameraScanning()) {
         try {
             await html5Qrcode.stop();
         } catch (err) {
             console.warn(err);
         }
     }
+    cameraScannerActive = false;
     html5Qrcode = null;
     restoreScannerContainerDom();
+}
+
+function stopCameraScannerAfterResult() {
+    return stopScannerIfRunning().then(() => {
+        if (scannerContainer) scannerContainer.style.display = 'none';
+        if (scannerPlaceholder) scannerPlaceholder.style.display = 'block';
+        if (startScannerBtn) startScannerBtn.style.display = 'none';
+        if (openCameraBtn) openCameraBtn.style.display = 'inline-block';
+    });
 }
 
 function renderQrDataToCanvas(data) {
@@ -544,6 +577,59 @@ function decodeGifToCanvases(arrayBuffer) {
     return canvases;
 }
 
+function isZipFile(file) {
+    const name = (file.name || '').toLowerCase();
+    return (
+        name.endsWith('.zip') ||
+        file.type === 'application/zip' ||
+        file.type === 'application/x-zip-compressed'
+    );
+}
+
+function isGifFile(file) {
+    const name = (file.name || '').toLowerCase();
+    return file.type === 'image/gif' || name.endsWith('.gif');
+}
+
+async function imageFilesFromZip(zipFile) {
+    if (typeof JSZip === 'undefined') {
+        throw new Error('ZIP library not loaded');
+    }
+    const zip = await JSZip.loadAsync(await zipFile.arrayBuffer());
+    const entries = [];
+    zip.forEach((relativePath, entry) => {
+        if (entry.dir) return;
+        const lower = relativePath.toLowerCase();
+        if (/\.(png|jpe?g|gif|webp|bmp)$/.test(lower)) {
+            entries.push({ path: relativePath, entry });
+        }
+    });
+    entries.sort((a, b) =>
+        a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: 'base' })
+    );
+    const files = [];
+    for (const { path, entry } of entries) {
+        const blob = await entry.async('blob');
+        const base = path.split('/').pop();
+        files.push(new File([blob], base, { type: blob.type || 'application/octet-stream' }));
+    }
+    return files;
+}
+
+async function scanUploadedImageFile(file, scanner) {
+    if (isGifFile(file)) {
+        return scanGifFile(file, scanner);
+    }
+    try {
+        const text = await scanner.scanFile(file, true);
+        onScanSuccess(text);
+        return 1;
+    } catch (err) {
+        console.warn('No QR in', file.name, err);
+        return 0;
+    }
+}
+
 async function scanGifFile(file, scanner) {
     const qr = scanner || html5Qrcode || new Html5Qrcode('scanner-container');
     if (!html5Qrcode) html5Qrcode = qr;
@@ -570,6 +656,9 @@ function renderUploadPreview() {
     }
     const names = uploadedFiles.map((f) => f.name).join(', ');
     const thumbs = uploadedFiles.slice(0, 4).map((f) => {
+        if (isZipFile(f)) {
+            return `<span style="display:inline-flex;align-items:center;justify-content:center;width:72px;height:72px;margin:4px;border-radius:8px;background:rgba(255,255,255,0.12);font-size:28px;" title="${escapeHtml(f.name)}">📦</span>`;
+        }
         const url = URL.createObjectURL(f);
         return `<img src="${url}" alt="" style="max-width:72px;max-height:72px;border-radius:8px;margin:4px;">`;
     }).join('');
@@ -587,16 +676,17 @@ async function scanAllUploadedFiles() {
     let totalScans = 0;
     try {
         for (const file of uploadedFiles) {
-            if (file.type === 'image/gif') {
-                totalScans += await scanGifFile(file, html5Qrcode);
-            } else {
-                try {
-                    const text = await html5Qrcode.scanFile(file, true);
-                    onScanSuccess(text);
-                    totalScans++;
-                } catch (err) {
-                    console.warn('No QR in', file.name, err);
+            if (isZipFile(file)) {
+                const innerFiles = await imageFilesFromZip(file);
+                if (!innerFiles.length) {
+                    showToast(`No images in ${file.name}`);
+                    continue;
                 }
+                for (const inner of innerFiles) {
+                    totalScans += await scanUploadedImageFile(inner, html5Qrcode);
+                }
+            } else {
+                totalScans += await scanUploadedImageFile(file, html5Qrcode);
             }
         }
         if (totalScans === 0) {
@@ -1040,42 +1130,28 @@ startScannerBtn.addEventListener('click', () => {
 });
 
 function stopScannerIfRunning() {
-    if (html5Qrcode && html5Qrcode.isRunning) {
-        return html5Qrcode.stop()
-            .then(() => {
-                html5Qrcode = null;
-                restoreScannerContainerDom();
-            })
-            .catch(() => {
-                html5Qrcode = null;
-                restoreScannerContainerDom();
-            });
+    if (!html5Qrcode || !cameraScannerActive) {
+        return Promise.resolve();
     }
-    html5Qrcode = null;
-    return Promise.resolve();
+    return html5Qrcode
+        .stop()
+        .catch((err) => console.warn(err))
+        .finally(() => {
+            cameraScannerActive = false;
+            html5Qrcode = null;
+            restoreScannerContainerDom();
+        });
 }
 
 function onScanSuccess(decodedText) {
     try {
         const parsed = parseQrPayload(decodedText);
         if (parsed.kind === 'chunk') {
-            const done = handleCollectedQrPart(parsed.index, parsed.total, parsed.part);
-            if (done) {
-                stopScannerIfRunning().then(() => {
-                    if (openCameraBtn && currentScanMethod === 'camera') {
-                        openCameraBtn.style.display = 'inline-block';
-                    }
-                });
-            }
+            handleCollectedQrPart(parsed.index, parsed.total, parsed.part);
             return;
         }
         resetQrChunkCollection();
         displayPayload(parsed.payload);
-        stopScannerIfRunning().then(() => {
-            if (openCameraBtn && currentScanMethod === 'camera') {
-                openCameraBtn.style.display = 'inline-block';
-            }
-        });
     } catch (error) {
         console.error('Decode error:', error, decodedText);
         showToast('Invalid QR code data');
@@ -1094,17 +1170,19 @@ function restartCamera() {
 function startScanner() {
     const config = { fps: 18, qrbox: { width: 260, height: 260 }, aspectRatio: 1.0, disableFlip: false };
     html5Qrcode = new Html5Qrcode('scanner-container');
-    html5Qrcode.start(
-        { facingMode: 'environment' },
-        config,
-        onScanSuccess,
-        onScanFailure
-    ).catch(err => {
-        console.error(err);
-        showToast('Failed to start camera. Please allow camera access.');
-        if (scannerPlaceholder) scannerPlaceholder.style.display = 'block';
-        startScannerBtn.style.display = 'block';
-    });
+    html5Qrcode
+        .start({ facingMode: 'environment' }, config, onScanSuccess, onScanFailure)
+        .then(() => {
+            cameraScannerActive = true;
+        })
+        .catch((err) => {
+            console.error(err);
+            cameraScannerActive = false;
+            html5Qrcode = null;
+            showToast('Failed to start camera. Please allow camera access.');
+            if (scannerPlaceholder) scannerPlaceholder.style.display = 'block';
+            startScannerBtn.style.display = 'block';
+        });
 }
 
 openCameraBtn.addEventListener('click', () => {

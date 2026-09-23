@@ -3,13 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="version" content="1.0.1">
     <title>Text Transfer</title>
     <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
     <div class="container">
         <h1>📝 Text Transfer</h1>
-        <p class="tagline">Share plain or rich text via QR code or 6-digit pairing</p>
+        <p class="tagline">Share plain or rich text via QR code or 6-digit pairing<span id="app-version" class="app-version"></span></p>
         
         <div class="tabs">
             <button class="tab-btn active" data-tab="sender">Send</button>
@@ -88,7 +89,7 @@
                     <div class="scan-methods">
                         <div class="method-selector">
                             <button class="method-btn active" data-method="camera">Camera</button>
-                            <button class="method-btn" data-method="upload">Upload Image / GIF</button>
+                            <button class="method-btn" data-method="upload">Upload Image / GIF / ZIP</button>
                         </div>
 
                         <div id="multi-qr-progress" class="multi-qr-progress hidden">
@@ -111,8 +112,8 @@
 
                             <div id="upload-scanner" style="display: none;">
                                 <div class="upload-area">
-                                    <p>📁 Upload one or more QR images, or an animated GIF (all frames scanned)</p>
-                                    <input type="file" id="upload-file" accept="image/*,.gif" multiple>
+                                    <p>📁 Upload QR PNGs, a ZIP from Send download, GIF, or mix multiple files</p>
+                                    <input type="file" id="upload-file" accept="image/*,.gif,.zip,application/zip" multiple>
                                     <div id="upload-preview" class="upload-preview"></div>
                                 </div>
                             </div>
