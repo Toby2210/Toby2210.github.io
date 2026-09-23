@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Transfer</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>📝 Text Transfer</h1>
+        <p class="tagline">Share plain or rich text via QR code or 6-digit pairing</p>
+        
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="sender">Send</button>
+            <button class="tab-btn" data-tab="receiver">Receive</button>
+        </div>
+
+        <!-- Sender Tab -->
+        <div class="tab-content active" id="sender-tab">
+            <div class="input-section">
+                <h2>Compose</h2>
+
+                <div class="format-selector">
+                    <button type="button" class="type-btn active" data-format="plain">Plain text</button>
+                    <button type="button" class="type-btn" data-format="rich">Rich text</button>
+                </div>
+
+                <div id="plain-input-wrap">
+                    <textarea id="message-input" placeholder="Enter your message here..."></textarea>
+                </div>
+
+                <div id="rich-input-wrap" class="hidden">
+                    <div class="rich-toolbar" id="rich-toolbar">
+                        <button type="button" class="toolbar-btn" data-cmd="bold" title="Bold"><b>B</b></button>
+                        <button type="button" class="toolbar-btn" data-cmd="italic" title="Italic"><i>I</i></button>
+                        <button type="button" class="toolbar-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+                        <button type="button" class="toolbar-btn" data-cmd="insertUnorderedList" title="Bullet list">• List</button>
+                        <button type="button" class="toolbar-btn" data-cmd="insertOrderedList" title="Numbered list">1. List</button>
+                    </div>
+                    <div id="rich-editor" class="rich-editor" contenteditable="true" data-placeholder="Enter formatted text..."></div>
+                </div>
+
+                <div class="send-method-selector">
+                    <button type="button" class="method-btn active" data-send-method="qr">QR Code</button>
+                    <button type="button" class="method-btn" data-send-method="pair">6-Digit Pair</button>
+                </div>
+
+                <div id="send-qr-actions">
+                    <button id="generate-qr" class="primary-btn">Generate QR Code</button>
+                </div>
+
+                <div id="send-pair-actions" class="hidden">
+                    <button id="generate-pair" class="primary-btn">Generate Code &amp; Wait</button>
+                    <div id="pair-send-area" class="pair-area hidden">
+                        <p class="pair-label">Share this 6-digit key with the receiver:</p>
+                        <div class="code-display" id="passkey-display">------</div>
+                        <div class="timer" id="timer-display">Expires in: 10:00</div>
+                        <p class="pair-status" id="pair-send-status">Waiting for receiver to connect...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="qr-section" id="qr-section" style="display: none;">
+                <h2>Scan to receive</h2>
+                <p id="qr-chunk-info" class="qr-chunk-info"></p>
+                <p id="qr-flash-status" class="qr-flash-status hidden"></p>
+                <div class="qr-container">
+                    <canvas id="optical-send-canvas" width="320" height="320" class="optical-canvas hidden"></canvas>
+                    <div id="qr-code"></div>
+                </div>
+                <p class="qr-instruction" id="qr-instruction">Short text: scan once. Long text: Decimen-style flashing QR (fountain code) — keep the camera on the sender screen.</p>
+                <button type="button" id="toggle-qr-flash" class="secondary-btn hidden">Pause flashing</button>
+                <button id="download-qr-btn" class="secondary-btn">Download Current QR</button>
+                <button id="new-message" class="secondary-btn">New Message</button>
+            </div>
+        </div>
+
+        <!-- Receiver Tab -->
+        <div class="tab-content" id="receiver-tab">
+            <div class="receiver-section">
+                <div class="method-selector receive-mode-selector">
+                    <button class="method-btn active" data-receive-mode="qr">QR Code</button>
+                    <button class="method-btn" data-receive-mode="pair">6-Digit Pair</button>
+                </div>
+
+                <div id="receive-qr-panel">
+                    <h2>Receive via QR Code</h2>
+                    <div class="scan-methods">
+                        <div class="method-selector">
+                            <button class="method-btn active" data-method="camera">Camera</button>
+                            <button class="method-btn" data-method="upload">Upload Image</button>
+                        </div>
+
+                        <div id="multi-qr-progress" class="multi-qr-progress hidden">
+                            <p id="multi-qr-progress-text">Optical stream idle</p>
+                            <p class="flash-hint">Long transfers use <a href="https://github.com/bashalarmistalt/decimen-optical-transfer" target="_blank" rel="noopener">Decimen</a> fountain-coded flashing QR — any frame order works; stay aimed until complete.</p>
+                            <button type="button" id="reset-qr-chunks" class="secondary-btn">Reset collection</button>
+                        </div>
+
+                        <div id="unified-scanner" class="scanner-container">
+                            <div id="camera-scanner">
+                                <div id="scanner-placeholder" class="scanner-placeholder">
+                                    <p>📷 Camera will be used to scan QR codes</p>
+                                    <button id="start-scanner" class="primary-btn">Start Scanner</button>
+                                </div>
+                                <div id="scanner-container">
+                                    <video id="video" autoplay playsinline></video>
+                                    <canvas id="canvas" style="display: none;"></canvas>
+                                </div>
+                            </div>
+
+                            <div id="upload-scanner" style="display: none;">
+                                <div class="upload-area">
+                                    <p>📁 Upload an image containing a QR code</p>
+                                    <input type="file" id="upload-file" accept="image/*">
+                                    <div id="upload-preview" class="upload-preview"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button id="open-camera-btn" class="secondary-btn" style="display: none; margin: 10px auto;">Open Camera</button>
+                    </div>
+                </div>
+
+                <div id="receive-pair-panel" class="hidden">
+                    <h2>Receive via 6-Digit Key</h2>
+                    <input type="tel" inputmode="numeric" pattern="[0-9]*" autocomplete="off" id="receive-code" placeholder="Enter 6-digit key" maxlength="6" />
+                    <button id="receive-pair-btn" class="primary-btn">Connect &amp; Receive</button>
+                    <p class="pair-status" id="pair-receive-status"></p>
+                </div>
+
+                <div id="scan-result" class="scan-result">
+                    <h3>Result</h3>
+                    <div id="result-content"></div>
+                    <button id="copy-result" class="secondary-btn">Copy plain text</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+    <script type="module" src="js/script.js"></script>
+</body>
+</html>

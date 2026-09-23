@@ -52,8 +52,8 @@ Combine multiple images into a single table layout with customizable options.
 - **Quick Image Paste**: Use the **"Paste Image"** text field to quickly add images. Simply press **Ctrl+V** (Windows) or **Cmd+V** (Mac) to paste images from your clipboard as attachments. The field only accepts image pasting, not text input.
 - **Image Count Display**: The number of uploaded images is displayed above the thumbnail preview area for easy tracking.
 
-### [QR Code Receiver](QRcode/index.html)
-Receive and decode QR codes directly in your browser.
+### [Text Transfer](Text-transfer/index.html)
+Send and receive plain or rich text between devices. Short messages use a single QR code; long content uses **[Decimen](https://github.com/bashalarmistalt/decimen-optical-transfer)-style fountain-coded flashing QR** (camera stays on the sender screen until decode completes). Also supports **6-digit pairing** (PeerJS, same style as P2P Fast Transfer). Rich text formatting is preserved on the receiver.
 
 ### [Video Cutter Tool](video-cutter-tool/index.html)
 Cut and trim video files directly in your browser.
