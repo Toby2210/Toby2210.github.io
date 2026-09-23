@@ -1,17 +1,8 @@
-// Text Transfer — static QR, Decimen optical stream, PeerJS pairing
-
-import {
-    shouldUseOpticalTransfer,
-    startDecimenSend,
-    stopDecimenSend,
-    setDecimenSendPaused,
-    startDecimenReceive,
-    stopDecimenReceive,
-    scanDecimenFromImageBitmap
-} from './decimen/optical.js';
+// Text Transfer — QR (chunked flashing) + PeerJS 6-digit pairing
 
 const TT_PROTOCOL = 'ttqr';
 const QR_CHUNK_MAX = 420;
+const QR_FLASH_MS = 320;
 const P2P_CHUNK_SIZE = 16000;
 const KEY_TTL_SECONDS = 10 * 60;
 
@@ -30,10 +21,8 @@ let currentReceiveMode = 'qr';
 
 let qrChunks = [];
 let qrChunkIndex = 0;
+let qrFlashInterval = null;
 let qrFlashPaused = false;
-let usingOpticalSend = false;
-let usingOpticalReceive = false;
-const opticalSendCanvas = () => document.getElementById('optical-send-canvas');
 let activePairConn = null;
 let p2pReceiveBuffer = null;
 
@@ -275,17 +264,16 @@ function buildQrCodeInto(element, data) {
 }
 
 function stopQrFlash() {
-    stopDecimenSend();
-    usingOpticalSend = false;
-    const canvas = opticalSendCanvas();
-    if (canvas) canvas.classList.add('hidden');
-    qrCodeContainer.classList.remove('hidden');
+    if (qrFlashInterval) {
+        clearInterval(qrFlashInterval);
+        qrFlashInterval = null;
+    }
 }
 
-function setFlashUi(active, label) {
+function setFlashUi(active, frameLabel) {
     if (active) {
         qrFlashStatus.classList.remove('hidden');
-        qrFlashStatus.textContent = label;
+        qrFlashStatus.textContent = `Flashing ${frameLabel} — keep receiver camera on this screen`;
         toggleQrFlashBtn.classList.remove('hidden');
         toggleQrFlashBtn.textContent = qrFlashPaused ? 'Resume flashing' : 'Pause flashing';
     } else {
@@ -294,40 +282,66 @@ function setFlashUi(active, label) {
     }
 }
 
-function renderSingleQr(data) {
+function startQrFlash(frames) {
     stopQrFlash();
+    qrFlashPaused = false;
+    let flashIndex = 0;
+
+    const showFrame = (index) => {
+        frames.forEach((frame, i) => {
+            frame.style.display = i === index ? 'flex' : 'none';
+        });
+        qrChunkIndex = index;
+        qrCodeContainer.dataset.qrData = qrChunks[index];
+        setFlashUi(true, `${index + 1} / ${frames.length}`);
+    };
+
+    showFrame(0);
+    qrFlashInterval = setInterval(() => {
+        if (qrFlashPaused) return;
+        flashIndex = (flashIndex + 1) % frames.length;
+        showFrame(flashIndex);
+    }, QR_FLASH_MS);
+}
+
+function renderSingleQr(data) {
     qrCodeContainer.innerHTML = '';
     qrCodeContainer.dataset.qrData = data;
     buildQrCodeInto(qrCodeContainer, data);
+    stopQrFlash();
     setFlashUi(false);
-    qrChunkInfo.textContent = 'Single QR code — scan once.';
+    qrChunkInfo.textContent = 'Single QR code — easy to scan.';
 }
 
-async function showGeneratedQr(compressed, payload) {
-    qrSection.style.display = 'block';
-    document.querySelector('#sender-tab .input-section').style.display = 'none';
+function renderFlashingQr() {
+    qrCodeContainer.innerHTML = '';
+    const stage = document.createElement('div');
+    stage.className = 'qr-flash-stage';
 
-    if (shouldUseOpticalTransfer(compressed.length)) {
-        usingOpticalSend = true;
-        qrFlashPaused = false;
-        qrCodeContainer.classList.add('hidden');
-        qrCodeContainer.innerHTML = '';
-        const canvas = opticalSendCanvas();
-        canvas.classList.remove('hidden');
-        qrChunks = [];
-        await startDecimenSend(canvas, payload, {
-            onReady: (info) => {
-                qrChunkInfo.textContent =
-                    `Decimen fountain stream · ${info.k} source blocks · ${info.fps} fps · ${info.frameBytes} bytes/frame`;
-                setFlashUi(true, 'Flashing optical QR — receiver keeps camera on this screen');
-            }
-        });
-        return;
-    }
+    qrChunks.forEach((data, index) => {
+        const frame = document.createElement('div');
+        frame.className = 'qr-flash-frame';
+        frame.style.display = index === 0 ? 'flex' : 'none';
+        buildQrCodeInto(frame, data);
+        stage.appendChild(frame);
+    });
 
+    qrCodeContainer.appendChild(stage);
+    qrChunkInfo.textContent =
+        `Long message uses flashing QR (${qrChunks.length} frames). Receiver scans continuously until done.`;
+    startQrFlash(stage.querySelectorAll('.qr-flash-frame'));
+}
+
+function showGeneratedQr(compressed) {
     qrChunks = splitQrStrings(compressed);
     qrChunkIndex = 0;
-    renderSingleQr(qrChunks[0]);
+    if (qrChunks.length > 1) {
+        renderFlashingQr();
+    } else {
+        renderSingleQr(qrChunks[0]);
+    }
+    qrSection.style.display = 'block';
+    document.querySelector('#sender-tab .input-section').style.display = 'none';
 }
 
 async function sendPayloadOverConn(conn, payload) {
@@ -460,14 +474,10 @@ tabBtns.forEach(btn => {
         btn.classList.add('active');
         document.getElementById(`${tab}-tab`).classList.add('active');
 
-        if (tab !== 'receiver') {
-            stopDecimenReceive();
-            usingOpticalReceive = false;
-            if (html5Qrcode && html5Qrcode.isRunning) {
-                html5Qrcode.stop().then(() => { html5Qrcode = null; }).catch(console.error);
-            } else {
-                html5Qrcode = null;
-            }
+        if (tab !== 'receiver' && html5Qrcode && html5Qrcode.isRunning) {
+            html5Qrcode.stop().then(() => { html5Qrcode = null; }).catch(console.error);
+        } else if (tab !== 'receiver') {
+            html5Qrcode = null;
         }
 
         if (tab === 'receiver') {
@@ -544,16 +554,16 @@ resetQrChunksBtn.addEventListener('click', () => {
 
 toggleQrFlashBtn.addEventListener('click', () => {
     qrFlashPaused = !qrFlashPaused;
-    if (usingOpticalSend) {
-        setDecimenSendPaused(qrFlashPaused);
-    }
     toggleQrFlashBtn.textContent = qrFlashPaused ? 'Resume flashing' : 'Pause flashing';
-    if (usingOpticalSend && !qrFlashPaused) {
-        setFlashUi(true, 'Flashing optical QR — receiver keeps camera on this screen');
+    if (!qrFlashPaused && qrChunks.length > 1) {
+        const frames = qrCodeContainer.querySelectorAll('.qr-flash-frame');
+        if (frames.length) {
+            setFlashUi(true, `${qrChunkIndex + 1} / ${frames.length}`);
+        }
     }
 });
 
-generateQRBtn.addEventListener('click', async () => {
+generateQRBtn.addEventListener('click', () => {
     const payload = buildPayload();
     if (!payload) {
         showToast('Please enter a message');
@@ -561,10 +571,8 @@ generateQRBtn.addEventListener('click', async () => {
     }
     try {
         const compressed = encodePayloadForTransfer(payload);
-        await showGeneratedQr(compressed, payload);
-        showToast(shouldUseOpticalTransfer(compressed.length)
-            ? 'Decimen optical stream started'
-            : 'QR code generated!');
+        showGeneratedQr(compressed);
+        showToast(qrChunks.length > 1 ? 'Flashing QR started on sender screen' : 'QR code generated!');
     } catch (error) {
         console.error(error);
         showToast('Failed to generate QR code.');
@@ -748,7 +756,6 @@ downloadQrBtn.addEventListener('click', () => {
 
 newMessageBtn.addEventListener('click', () => {
     stopQrFlash();
-    stopDecimenSend();
     qrSection.style.display = 'none';
     document.querySelector('#sender-tab .input-section').style.display = 'block';
     qrCodeContainer.innerHTML = '';
@@ -785,9 +792,11 @@ document.addEventListener('click', (e) => {
 });
 
 function scanUploadedImage(imageSrc) {
+    html5Qrcode = new Html5Qrcode('scanner-container');
     uploadPreview.innerHTML = '<p style="color: white;">Scanning QR code...</p>';
 
-    const restorePreview = () => {
+    const onFail = () => {
+        showToast('No QR code found in the image');
         uploadPreview.dataset.imageSrc = imageSrc;
         uploadPreview.innerHTML = `
             <img src="${imageSrc}" alt="Uploaded image" style="max-width: 100%; max-height: 300px; display: block; margin-bottom: 15px;">
@@ -797,41 +806,16 @@ function scanUploadedImage(imageSrc) {
         uploadedFile = null;
     };
 
-    const img = new Image();
-    img.onload = async () => {
-        const c = document.createElement('canvas');
-        c.width = img.naturalWidth;
-        c.height = img.naturalHeight;
-        const ctx = c.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        const imageData = ctx.getImageData(0, 0, c.width, c.height);
-        let handled = false;
-        try {
-            await scanDecimenFromImageBitmap(imageData, {
-                onPayload: (payload) => {
-                    handled = true;
-                    displayPayload(payload);
-                    uploadPreview.innerHTML = '';
-                },
-                onLegacyText: (text) => {
-                    handled = true;
-                    onScanSuccess(text);
-                    uploadPreview.innerHTML = '';
-                }
+    if (uploadedFile) {
+        html5Qrcode.scanFile(uploadedFile)
+            .then(onScanSuccess)
+            .catch(err => {
+                console.error(err);
+                onFail();
             });
-        } catch (err) {
-            console.error(err);
-        }
-        if (!handled) {
-            showToast('No QR code found (static QR only for uploads; use camera for flashing stream)');
-            restorePreview();
-        }
-    };
-    img.onerror = () => {
-        showToast('Failed to load image');
-        restorePreview();
-    };
-    img.src = imageSrc;
+    } else {
+        onFail();
+    }
 }
 
 startScannerBtn.addEventListener('click', () => {
@@ -879,50 +863,30 @@ function onScanSuccess(decodedText) {
 function onScanFailure() {}
 
 function restartCamera() {
-    stopDecimenReceive();
-    usingOpticalReceive = false;
-    startScanner();
+    if (html5Qrcode && html5Qrcode.isRunning) {
+        html5Qrcode.stop().then(() => {
+            html5Qrcode = null;
+            startScanner();
+        }).catch(() => startScanner());
+    } else {
+        startScanner();
+    }
 }
 
-async function startScanner() {
-    stopDecimenReceive();
-    if (html5Qrcode && html5Qrcode.isRunning) {
-        await html5Qrcode.stop().catch(() => {});
-        html5Qrcode = null;
-    }
-    scannerContainer.style.display = 'block';
-    videoElement.style.display = 'block';
-    usingOpticalReceive = true;
-    multiQrProgress.classList.remove('hidden');
-    multiQrProgressText.textContent = 'Starting optical decoder…';
-
-    try {
-        await startDecimenReceive(videoElement, canvasElement, {
-            onProgress: (p) => {
-                multiQrProgressText.textContent =
-                    `Optical stream · ${p.usefulFrames} useful frames · ${p.solved}/${p.k} blocks recovered`;
-            },
-            onPayload: (payload) => {
-                displayPayload(payload);
-                stopDecimenReceive();
-                usingOpticalReceive = false;
-                multiQrProgressText.textContent = 'Transfer complete';
-                if (openCameraBtn) openCameraBtn.style.display = 'inline-block';
-                showToast('Text received!');
-            },
-            onLegacyText: (text) => onScanSuccess(text),
-            onError: (err) => {
-                console.error(err);
-                showToast('Optical decode error');
-            }
-        });
-    } catch (err) {
+function startScanner() {
+    const config = { fps: 18, qrbox: { width: 260, height: 260 }, aspectRatio: 1.0, disableFlip: false };
+    html5Qrcode = new Html5Qrcode('scanner-container');
+    html5Qrcode.start(
+        { facingMode: 'environment' },
+        config,
+        onScanSuccess,
+        onScanFailure
+    ).catch(err => {
         console.error(err);
-        usingOpticalReceive = false;
         showToast('Failed to start camera. Please allow camera access.');
         if (scannerPlaceholder) scannerPlaceholder.style.display = 'block';
         startScannerBtn.style.display = 'block';
-    }
+    });
 }
 
 openCameraBtn.addEventListener('click', () => {

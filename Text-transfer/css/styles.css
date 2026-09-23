@@ -233,18 +233,6 @@ h2 {
     align-items: center;
 }
 
-.optical-canvas {
-    display: block;
-    margin: 0 auto;
-    max-width: 100%;
-    border-radius: 12px;
-    background: #fff;
-}
-
-.flash-hint a {
-    color: #664d03;
-}
-
 .qr-instruction {
     color: #666;
     margin: 15px 0;

@@ -66,10 +66,9 @@
                 <p id="qr-chunk-info" class="qr-chunk-info"></p>
                 <p id="qr-flash-status" class="qr-flash-status hidden"></p>
                 <div class="qr-container">
-                    <canvas id="optical-send-canvas" width="320" height="320" class="optical-canvas hidden"></canvas>
                     <div id="qr-code"></div>
                 </div>
-                <p class="qr-instruction" id="qr-instruction">Short text: scan once. Long text: Decimen-style flashing QR (fountain code) — keep the camera on the sender screen.</p>
+                <p class="qr-instruction" id="qr-instruction">Point the receiver camera at this screen until transfer completes.</p>
                 <button type="button" id="toggle-qr-flash" class="secondary-btn hidden">Pause flashing</button>
                 <button id="download-qr-btn" class="secondary-btn">Download Current QR</button>
                 <button id="new-message" class="secondary-btn">New Message</button>
@@ -93,8 +92,8 @@
                         </div>
 
                         <div id="multi-qr-progress" class="multi-qr-progress hidden">
-                            <p id="multi-qr-progress-text">Optical stream idle</p>
-                            <p class="flash-hint">Long transfers use <a href="https://github.com/bashalarmistalt/decimen-optical-transfer" target="_blank" rel="noopener">Decimen</a> fountain-coded flashing QR — any frame order works; stay aimed until complete.</p>
+                            <p id="multi-qr-progress-text">Receiving flashing QR… 0 / 0 frames captured</p>
+                            <p class="flash-hint">Keep the camera aimed at the sender screen until all frames are collected.</p>
                             <button type="button" id="reset-qr-chunks" class="secondary-btn">Reset collection</button>
                         </div>
 
@@ -144,6 +143,6 @@
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
-    <script type="module" src="js/script.js"></script>
+    <script src="js/script.js"></script>
 </body>
 </html>

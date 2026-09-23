@@ -53,7 +53,7 @@ Combine multiple images into a single table layout with customizable options.
 - **Image Count Display**: The number of uploaded images is displayed above the thumbnail preview area for easy tracking.
 
 ### [Text Transfer](Text-transfer/index.html)
-Send and receive plain or rich text between devices. Short messages use a single QR code; long content uses **[Decimen](https://github.com/bashalarmistalt/decimen-optical-transfer)-style fountain-coded flashing QR** (camera stays on the sender screen until decode completes). Also supports **6-digit pairing** (PeerJS, same style as P2P Fast Transfer). Rich text formatting is preserved on the receiver.
+Send and receive plain or rich text between devices. Use **QR codes** (long messages use flashing multi-frame QR) or a **6-digit pairing key** (PeerJS, same style as P2P Fast Transfer). Rich text formatting is preserved on the receiver.
 
 ### [Video Cutter Tool](video-cutter-tool/index.html)
 Cut and trim video files directly in your browser.
