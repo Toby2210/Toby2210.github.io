@@ -14,7 +14,7 @@ const ICE_SERVERS = [
 
 let html5Qrcode = null;
 let currentScanMethod = 'camera';
-let uploadedFile = null;
+let uploadedFiles = [];
 let currentFormat = 'plain';
 let currentSendMethod = 'qr';
 let currentReceiveMode = 'qr';
@@ -345,7 +345,7 @@ function startQrFlash(frames) {
 
 function updateDownloadQrButtonLabel() {
     if (qrChunks.length > 1) {
-        downloadQrBtn.textContent = 'Download GIF';
+        downloadQrBtn.textContent = `Download ${qrChunks.length} QR images (ZIP)`;
     } else {
         downloadQrBtn.textContent = 'Download QR (PNG)';
     }
@@ -376,7 +376,7 @@ function renderFlashingQr() {
 
     qrCodeContainer.appendChild(stage);
     qrChunkInfo.textContent =
-        `Long message uses flashing QR (${qrChunks.length} frames). Receiver scans continuously, or upload the GIF.`;
+        `Long message uses flashing QR (${qrChunks.length} frames). Scan with camera, or upload all PNG images / a GIF.`;
     startQrFlash(stage.querySelectorAll('.qr-flash-frame'));
     updateDownloadQrButtonLabel();
 }
@@ -480,48 +480,36 @@ function renderQrDataToCanvas(data) {
     });
 }
 
-async function downloadQrAsGif() {
-    if (typeof GIF === 'undefined') {
-        showToast('GIF encoder not loaded');
+async function downloadAllQrPngs() {
+    if (typeof JSZip === 'undefined') {
+        showToast('ZIP library not loaded');
         return;
     }
     downloadQrBtn.disabled = true;
-    downloadQrBtn.textContent = 'Building GIF…';
+    downloadQrBtn.textContent = 'Preparing images…';
     try {
-        const gif = new GIF({
-            workers: 0,
-            quality: 10,
-            width: 280,
-            height: 280
-        });
+        const zip = new JSZip();
+        const pad = String(qrChunks.length).length;
         for (let i = 0; i < qrChunks.length; i++) {
             const canvas = await renderQrDataToCanvas(qrChunks[i]);
-            gif.addFrame(canvas, { copy: true, delay: QR_FLASH_MS });
+            const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+            if (!pngBlob) throw new Error('PNG encode failed');
+            const num = String(i + 1).padStart(pad, '0');
+            zip.file(`text-transfer-qr-${num}-of-${qrChunks.length}.png`, pngBlob);
         }
-        const blob = await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => reject(new Error('GIF render timeout')), 120000);
-            gif.on('finished', (b) => {
-                clearTimeout(timer);
-                resolve(b);
-            });
-            gif.on('abort', () => {
-                clearTimeout(timer);
-                reject(new Error('GIF aborted'));
-            });
-            gif.render();
-        });
-        const url = URL.createObjectURL(blob);
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(zipBlob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `text-transfer-qr-${qrChunks.length}-frames.gif`;
+        link.download = `text-transfer-qr-${qrChunks.length}-frames.zip`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         setTimeout(() => URL.revokeObjectURL(url), 60000);
-        showToast('GIF saved!');
+        showToast(`Saved ${qrChunks.length} QR images (ZIP)`);
     } catch (err) {
         console.error(err);
-        showToast('Failed to create GIF: ' + (err.message || err));
+        showToast('Failed to download QR images');
     } finally {
         downloadQrBtn.disabled = false;
         updateDownloadQrButtonLabel();
@@ -556,46 +544,72 @@ function decodeGifToCanvases(arrayBuffer) {
     return canvases;
 }
 
-async function scanGifFile(file) {
-    uploadPreview.innerHTML = '<p style="color: white;">Scanning GIF frames…</p>';
+async function scanGifFile(file, scanner) {
+    const qr = scanner || html5Qrcode || new Html5Qrcode('scanner-container');
+    if (!html5Qrcode) html5Qrcode = qr;
+    const canvases = decodeGifToCanvases(await file.arrayBuffer());
+    let scanned = 0;
+    for (let i = 0; i < canvases.length; i++) {
+        const blob = await new Promise((res) => canvases[i].toBlob(res, 'image/png'));
+        if (!blob) continue;
+        try {
+            const text = await qr.scanFile(blob, true);
+            onScanSuccess(text);
+            scanned++;
+        } catch {
+            /* frame without readable QR */
+        }
+    }
+    return scanned;
+}
+
+function renderUploadPreview() {
+    if (!uploadedFiles.length) {
+        uploadPreview.innerHTML = '';
+        return;
+    }
+    const names = uploadedFiles.map((f) => f.name).join(', ');
+    const thumbs = uploadedFiles.slice(0, 4).map((f) => {
+        const url = URL.createObjectURL(f);
+        return `<img src="${url}" alt="" style="max-width:72px;max-height:72px;border-radius:8px;margin:4px;">`;
+    }).join('');
+    uploadPreview.innerHTML = `
+        <p style="color:white;margin-bottom:8px;">${uploadedFiles.length} file(s): ${escapeHtml(names)}</p>
+        <div style="display:flex;flex-wrap:wrap;justify-content:center;margin-bottom:12px;">${thumbs}</div>
+        <button id="scan-qr-btn" class="primary-btn">Scan all</button>
+    `;
+}
+
+async function scanAllUploadedFiles() {
+    if (!uploadedFiles.length) return;
+    uploadPreview.innerHTML = '<p style="color: white;">Scanning…</p>';
     html5Qrcode = new Html5Qrcode('scanner-container');
+    let totalScans = 0;
     try {
-        const canvases = decodeGifToCanvases(await file.arrayBuffer());
-        let scanned = 0;
-        for (let i = 0; i < canvases.length; i++) {
-            const blob = await new Promise((res) => canvases[i].toBlob(res, 'image/png'));
-            if (!blob) continue;
-            try {
-                const text = await html5Qrcode.scanFile(blob, true);
-                onScanSuccess(text);
-                scanned++;
-            } catch {
-                /* frame without readable QR */
+        for (const file of uploadedFiles) {
+            if (file.type === 'image/gif') {
+                totalScans += await scanGifFile(file, html5Qrcode);
+            } else {
+                try {
+                    const text = await html5Qrcode.scanFile(file, true);
+                    onScanSuccess(text);
+                    totalScans++;
+                } catch (err) {
+                    console.warn('No QR in', file.name, err);
+                }
             }
         }
-        if (scanned === 0) {
-            showToast('No QR codes found in GIF');
-            restoreUploadPreviewAfterScan(file);
+        if (totalScans === 0) {
+            showToast('No QR codes found in uploaded file(s)');
+            renderUploadPreview();
         } else {
-            uploadPreview.innerHTML = `<p style="color:white;">Scanned ${scanned} frame(s) from GIF.</p>`;
+            uploadPreview.innerHTML = `<p style="color:white;">Scanned ${totalScans} QR code(s) from ${uploadedFiles.length} file(s).</p>`;
         }
     } catch (err) {
         console.error(err);
-        showToast('Failed to read GIF');
-        restoreUploadPreviewAfterScan(file);
+        showToast('Scan failed');
+        renderUploadPreview();
     }
-}
-
-function restoreUploadPreviewAfterScan(file) {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-        uploadPreview.dataset.imageSrc = event.target.result;
-        uploadPreview.innerHTML = `
-            <img src="${event.target.result}" alt="Uploaded" style="max-width: 100%; max-height: 300px; display: block; margin-bottom: 15px;">
-            <button id="scan-qr-btn" class="primary-btn">Scan again</button>
-        `;
-    };
-    reader.readAsDataURL(file);
 }
 
 function showGeneratedQr(compressed) {
@@ -765,7 +779,7 @@ methodBtns.forEach(btn => {
             scannerContainer.style.display = 'block';
             uploadPreview.innerHTML = '';
             uploadFile.value = '';
-            uploadedFile = null;
+            uploadedFiles = [];
             restoreScannerContainerDom();
             if (scannerPlaceholder) scannerPlaceholder.style.display = 'block';
             if (openCameraBtn) openCameraBtn.style.display = 'none';
@@ -974,7 +988,7 @@ receivePairBtn.addEventListener('click', () => {
 
 downloadQrBtn.addEventListener('click', () => {
     if (qrChunks.length > 1) {
-        downloadQrAsGif();
+        downloadAllQrPngs();
         return;
     }
     const qrImg = qrCodeContainer.querySelector('img');
@@ -1003,60 +1017,20 @@ newMessageBtn.addEventListener('click', () => {
 });
 
 uploadFile.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    uploadedFile = file;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-        uploadPreview.dataset.imageSrc = event.target.result;
-        uploadPreview.innerHTML = `
-            <img src="${event.target.result}" alt="Uploaded image" style="max-width: 100%; max-height: 300px; display: block; margin-bottom: 15px;">
-            <button id="scan-qr-btn" class="primary-btn">Scan QR Code</button>
-        `;
-    };
-    reader.readAsDataURL(file);
+    uploadedFiles = Array.from(e.target.files || []);
+    if (!uploadedFiles.length) return;
+    renderUploadPreview();
 });
 
 document.addEventListener('click', (e) => {
-    if (e.target.id === 'scan-qr-btn' && uploadedFile) {
+    if (e.target.id === 'scan-qr-btn' && uploadedFiles.length) {
         e.target.textContent = 'Scanning...';
         e.target.disabled = true;
-        if (uploadedFile.type === 'image/gif') {
-            scanGifFile(uploadedFile).finally(() => {
-                uploadFile.value = '';
-            });
-        } else {
-            scanUploadedImage(uploadPreview.dataset.imageSrc);
-        }
+        scanAllUploadedFiles().finally(() => {
+            e.target.disabled = false;
+        });
     }
 });
-
-function scanUploadedImage(imageSrc) {
-    html5Qrcode = new Html5Qrcode('scanner-container');
-    uploadPreview.innerHTML = '<p style="color: white;">Scanning QR code...</p>';
-
-    const onFail = () => {
-        showToast('No QR code found in the image');
-        uploadPreview.dataset.imageSrc = imageSrc;
-        uploadPreview.innerHTML = `
-            <img src="${imageSrc}" alt="Uploaded image" style="max-width: 100%; max-height: 300px; display: block; margin-bottom: 15px;">
-            <button id="scan-qr-btn" class="primary-btn">Scan again</button>
-        `;
-        uploadFile.value = '';
-        uploadedFile = null;
-    };
-
-    if (uploadedFile) {
-        html5Qrcode.scanFile(uploadedFile)
-            .then(onScanSuccess)
-            .catch(err => {
-                console.error(err);
-                onFail();
-            });
-    } else {
-        onFail();
-    }
-}
 
 startScannerBtn.addEventListener('click', () => {
     startScannerBtn.style.display = 'none';
