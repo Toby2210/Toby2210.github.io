@@ -78,9 +78,13 @@ const unifiedScanner = document.getElementById('unified-scanner');
 const receiveCodeInput = document.getElementById('receive-code');
 const receivePairBtn = document.getElementById('receive-pair-btn');
 const pairReceiveStatus = document.getElementById('pair-receive-status');
-const multiQrProgress = document.getElementById('multi-qr-progress');
 const multiQrProgressText = document.getElementById('multi-qr-progress-text');
+const scanStatusBar = document.getElementById('scan-status-bar');
+const scanStatusHint = document.getElementById('scan-status-hint');
 const resetQrChunksBtn = document.getElementById('reset-qr-chunks');
+const receiveScanWorkspace = document.getElementById('receive-scan-workspace');
+const receiveNewTextBtn = document.getElementById('receive-new-text');
+const scanResultTitle = document.getElementById('scan-result-title');
 const qrChunkInfo = document.getElementById('qr-chunk-info');
 const qrFlashStatus = document.getElementById('qr-flash-status');
 const toggleQrFlashBtn = document.getElementById('toggle-qr-flash');
@@ -188,6 +192,29 @@ function normalizePayload(obj) {
     };
 }
 
+function setScanStatusBarVisible(show) {
+    if (scanStatusBar) scanStatusBar.classList.toggle('hidden', !show);
+}
+
+function updateScanStatusIdle() {
+    if (!multiQrProgressText) return;
+    multiQrProgressText.textContent = cameraScannerActive
+        ? 'Scanning… point at the QR code'
+        : 'Tap Start Scanner, then point at the QR code';
+    if (scanStatusHint) scanStatusHint.textContent = '';
+    if (resetQrChunksBtn) resetQrChunksBtn.classList.add('hidden');
+}
+
+function updateScanStatusCollecting(captured, total) {
+    if (!multiQrProgressText) return;
+    multiQrProgressText.textContent = `${captured} / ${total} QR frames captured`;
+    if (scanStatusHint) {
+        scanStatusHint.textContent =
+            'Keep the camera on the sender screen until all frames are collected.';
+    }
+    if (resetQrChunksBtn) resetQrChunksBtn.classList.remove('hidden');
+}
+
 function handleCollectedQrPart(index, total, part) {
     if (qrChunkCollector.has(index)) {
         if (qrChunkCollector.size >= total) {
@@ -197,13 +224,9 @@ function handleCollectedQrPart(index, total, part) {
     }
     expectedQrTotal = total;
     qrChunkCollector.set(index, part);
-    multiQrProgress.classList.remove('hidden');
-    multiQrProgressText.textContent = `Receiving flashing QR… ${qrChunkCollector.size} / ${total} frames captured`;
+    updateScanStatusCollecting(qrChunkCollector.size, total);
 
     if (qrChunkCollector.size < total) {
-        if (qrChunkCollector.size === 1) {
-            showToast(`Flashing transfer started (${total} frames)`);
-        }
         return false;
     }
 
@@ -221,15 +244,65 @@ function finishFromCollector(total) {
     }
     resetQrChunkCollection();
     const payload = decodeTransferString(ordered.join(''));
-    displayPayload(payload);
+    void forceStopCameraScanner().then(() => displayPayload(payload));
     return true;
 }
 
 function resetQrChunkCollection() {
     qrChunkCollector.clear();
     expectedQrTotal = 0;
-    multiQrProgress.classList.add('hidden');
-    multiQrProgressText.textContent = 'Receiving flashing QR… 0 / 0 frames captured';
+    updateScanStatusIdle();
+}
+
+function releaseCameraStreams(rootEl) {
+    const root = rootEl || document.getElementById('receive-qr-panel');
+    if (!root) return;
+    root.querySelectorAll('video').forEach((video) => {
+        const stream = video.srcObject;
+        if (stream && typeof stream.getTracks === 'function') {
+            stream.getTracks().forEach((track) => track.stop());
+        }
+        video.srcObject = null;
+    });
+}
+
+function hasReceiveResultContent() {
+    return Boolean(resultContent && resultContent.innerHTML.trim());
+}
+
+function showReceiveResultPanel() {
+    if (!scanResult) return;
+    scanResult.classList.remove('hidden');
+    scanResult.style.display = 'block';
+    if (scanResultTitle) scanResultTitle.textContent = 'Received';
+    if (currentReceiveMode === 'qr' && receiveScanWorkspace) {
+        receiveScanWorkspace.classList.add('receive-scan-workspace--hidden');
+    }
+    requestAnimationFrame(() => {
+        scanResult.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+}
+
+function beginNewReceive() {
+    if (resultContent) resultContent.innerHTML = '';
+    if (scanResult) {
+        scanResult.classList.add('hidden');
+        scanResult.style.display = 'none';
+    }
+    if (receiveScanWorkspace) {
+        receiveScanWorkspace.classList.remove('receive-scan-workspace--hidden');
+    }
+    resetQrChunkCollection();
+    if (currentScanMethod === 'camera') {
+        stopScannerAndResetUi().then(() => {
+            restoreReceiveQrUi();
+            updateScanStatusIdle();
+        });
+    } else {
+        uploadedFiles = [];
+        if (uploadFile) uploadFile.value = '';
+        if (uploadPreview) uploadPreview.innerHTML = '';
+    }
 }
 
 async function copyFormattedHtml(html, plain) {
@@ -272,7 +345,6 @@ async function copyFormattedHtml(html, plain) {
 
 function displayPayload(payload) {
     const normalized = normalizePayload(payload);
-    scanResult.style.display = 'block';
 
     if (normalized.f === 'html') {
         resultContent.className = 'rich-content';
@@ -297,10 +369,10 @@ function displayPayload(payload) {
         };
     }
 
+    showReceiveResultPanel();
+
     if (currentReceiveMode === 'qr' && currentScanMethod === 'camera') {
-        stopCameraScannerAfterResult();
-    } else if (openCameraBtn && currentScanMethod === 'camera') {
-        openCameraBtn.style.display = 'inline-block';
+        void stopCameraScannerAfterResult();
     }
 }
 
@@ -417,6 +489,13 @@ function restoreReceiveQrUi() {
 
     if (unifiedScanner) unifiedScanner.style.display = 'block';
 
+    if (hasReceiveResultContent() && receiveScanWorkspace) {
+        receiveScanWorkspace.classList.add('receive-scan-workspace--hidden');
+    } else if (receiveScanWorkspace) {
+        receiveScanWorkspace.classList.remove('receive-scan-workspace--hidden');
+    }
+
+    setScanStatusBarVisible(currentScanMethod === 'camera');
     if (currentScanMethod === 'camera') {
         cameraScanner.style.display = 'block';
         uploadScanner.style.display = 'none';
@@ -425,6 +504,7 @@ function restoreReceiveQrUi() {
         scannerContainer.style.display = 'block';
         if (scannerPlaceholder) scannerPlaceholder.style.display = 'block';
         if (openCameraBtn) openCameraBtn.style.display = 'none';
+        updateScanStatusIdle();
     } else {
         cameraScanner.style.display = 'none';
         uploadScanner.style.display = 'block';
@@ -435,31 +515,32 @@ function restoreReceiveQrUi() {
     }
 }
 
-function isHtml5QrcodeCameraScanning() {
-    if (!html5Qrcode || !cameraScannerActive) return false;
-    if (typeof html5Qrcode.isScanning === 'function') return html5Qrcode.isScanning();
-    return true;
-}
-
-async function stopScannerAndResetUi() {
-    if (html5Qrcode && isHtml5QrcodeCameraScanning()) {
+async function forceStopCameraScanner() {
+    const instance = html5Qrcode;
+    if (instance) {
         try {
-            await html5Qrcode.stop();
+            await instance.stop();
         } catch (err) {
             console.warn(err);
         }
     }
     cameraScannerActive = false;
     html5Qrcode = null;
+    releaseCameraStreams(document.getElementById('receive-qr-panel'));
     restoreScannerContainerDom();
 }
 
+async function stopScannerAndResetUi() {
+    await forceStopCameraScanner();
+}
+
 function stopCameraScannerAfterResult() {
-    return stopScannerIfRunning().then(() => {
+    return forceStopCameraScanner().then(() => {
         if (scannerContainer) scannerContainer.style.display = 'none';
         if (scannerPlaceholder) scannerPlaceholder.style.display = 'block';
-        if (startScannerBtn) startScannerBtn.style.display = 'none';
-        if (openCameraBtn) openCameraBtn.style.display = 'inline-block';
+        if (startScannerBtn) startScannerBtn.style.display = 'block';
+        if (openCameraBtn) openCameraBtn.style.display = 'none';
+        updateScanStatusIdle();
     });
 }
 
@@ -847,7 +928,15 @@ tabBtns.forEach(btn => {
             stopScannerAndResetUi();
         } else {
             restoreReceiveQrUi();
-            if (scanResult) scanResult.style.display = 'block';
+            if (scanResult) {
+                if (hasReceiveResultContent()) {
+                    scanResult.classList.remove('hidden');
+                    scanResult.style.display = 'block';
+                } else {
+                    scanResult.classList.add('hidden');
+                    scanResult.style.display = 'none';
+                }
+            }
         }
     });
 });
@@ -861,6 +950,7 @@ methodBtns.forEach(btn => {
         currentScanMethod = method;
         window.currentScanMethod = method;
 
+        setScanStatusBarVisible(method === 'camera');
         if (method === 'camera') {
             cameraScanner.style.display = 'block';
             uploadScanner.style.display = 'none';
@@ -873,6 +963,7 @@ methodBtns.forEach(btn => {
             restoreScannerContainerDom();
             if (scannerPlaceholder) scannerPlaceholder.style.display = 'block';
             if (openCameraBtn) openCameraBtn.style.display = 'none';
+            updateScanStatusIdle();
         } else {
             cameraScanner.style.display = 'none';
             uploadScanner.style.display = 'block';
@@ -886,8 +977,11 @@ methodBtns.forEach(btn => {
 
 resetQrChunksBtn.addEventListener('click', () => {
     resetQrChunkCollection();
-    showToast('QR collection reset');
 });
+
+if (receiveNewTextBtn) {
+    receiveNewTextBtn.addEventListener('click', () => beginNewReceive());
+}
 
 toggleQrFlashBtn.addEventListener('click', () => {
     qrFlashPaused = !qrFlashPaused;
@@ -1129,20 +1223,6 @@ startScannerBtn.addEventListener('click', () => {
     startScanner();
 });
 
-function stopScannerIfRunning() {
-    if (!html5Qrcode || !cameraScannerActive) {
-        return Promise.resolve();
-    }
-    return html5Qrcode
-        .stop()
-        .catch((err) => console.warn(err))
-        .finally(() => {
-            cameraScannerActive = false;
-            html5Qrcode = null;
-            restoreScannerContainerDom();
-        });
-}
-
 function onScanSuccess(decodedText) {
     try {
         const parsed = parseQrPayload(decodedText);
@@ -1170,18 +1250,21 @@ function restartCamera() {
 function startScanner() {
     const config = { fps: 18, qrbox: { width: 260, height: 260 }, aspectRatio: 1.0, disableFlip: false };
     html5Qrcode = new Html5Qrcode('scanner-container');
+    cameraScannerActive = true;
     html5Qrcode
         .start({ facingMode: 'environment' }, config, onScanSuccess, onScanFailure)
         .then(() => {
-            cameraScannerActive = true;
+            updateScanStatusIdle();
         })
         .catch((err) => {
             console.error(err);
             cameraScannerActive = false;
             html5Qrcode = null;
+            releaseCameraStreams(document.getElementById('receive-qr-panel'));
             showToast('Failed to start camera. Please allow camera access.');
             if (scannerPlaceholder) scannerPlaceholder.style.display = 'block';
             startScannerBtn.style.display = 'block';
+            updateScanStatusIdle();
         });
 }
 
@@ -1190,6 +1273,8 @@ openCameraBtn.addEventListener('click', () => {
 });
 
 window.addEventListener('load', () => {
+    setScanStatusBarVisible(currentScanMethod === 'camera');
+    updateScanStatusIdle();
     const urlParams = new URLSearchParams(window.location.search);
     const encodedData = urlParams.get('data');
     if (encodedData) {

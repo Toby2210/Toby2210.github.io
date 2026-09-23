@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="version" content="1.0.1">
+    <meta name="version" content="1.0.2">
     <title>Text Transfer</title>
     <link rel="stylesheet" href="css/styles.css">
 </head>
@@ -84,18 +84,27 @@
                     <button class="method-btn" data-receive-mode="pair">6-Digit Pair</button>
                 </div>
 
+                <div id="scan-result" class="scan-result hidden">
+                    <h3 id="scan-result-title">Received</h3>
+                    <div id="result-content"></div>
+                    <div class="scan-result-actions">
+                        <button id="copy-result" class="secondary-btn">Copy</button>
+                        <button type="button" id="receive-new-text" class="primary-btn">Receive new text</button>
+                    </div>
+                </div>
+
                 <div id="receive-qr-panel">
                     <h2>Receive via QR Code</h2>
-                    <div class="scan-methods">
+                    <div id="receive-scan-workspace" class="scan-methods">
                         <div class="method-selector">
                             <button class="method-btn active" data-method="camera">Camera</button>
                             <button class="method-btn" data-method="upload">Upload Image / GIF / ZIP</button>
                         </div>
 
-                        <div id="multi-qr-progress" class="multi-qr-progress hidden">
-                            <p id="multi-qr-progress-text">Receiving flashing QR… 0 / 0 frames captured</p>
-                            <p class="flash-hint">Keep the camera aimed at the sender screen until all frames are collected.</p>
-                            <button type="button" id="reset-qr-chunks" class="secondary-btn">Reset collection</button>
+                        <div id="scan-status-bar" class="scan-status-bar">
+                            <p id="multi-qr-progress-text" class="scan-status-text">Tap Start Scanner, then point at the QR code</p>
+                            <p id="scan-status-hint" class="scan-status-hint"></p>
+                            <button type="button" id="reset-qr-chunks" class="secondary-btn hidden">Reset collection</button>
                         </div>
 
                         <div id="unified-scanner" class="scanner-container">
@@ -128,12 +137,6 @@
                     <input type="tel" inputmode="numeric" pattern="[0-9]*" autocomplete="off" id="receive-code" placeholder="Enter 6-digit key" maxlength="6" />
                     <button id="receive-pair-btn" class="primary-btn">Connect &amp; Receive</button>
                     <p class="pair-status" id="pair-receive-status"></p>
-                </div>
-
-                <div id="scan-result" class="scan-result">
-                    <h3>Result</h3>
-                    <div id="result-content"></div>
-                    <button id="copy-result" class="secondary-btn">Copy</button>
                 </div>
             </div>
         </div>
