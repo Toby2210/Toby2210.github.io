@@ -58,6 +58,9 @@ Send and receive plain or rich text between devices. Use **QR codes** (long mess
 ### [Video Cutter Tool](video-cutter-tool/index.html)
 Cut and trim video files directly in your browser.
 
+### [Vision Audio](vision_audio/index.html)
+Monitor whether your PC is outputting sound **without** routing analysis audio to your speakers. Uses screen share with **system audio** (Chrome/Edge), **loopback**, or **microphone**. After a one-step calibration with a sound-level app/meter, shows **estimated heard loudness (dBA)** and **WHO listening safety** hints, plus waveform, spectrum, and sample rate. UI in **Traditional Chinese (HK)** and **English**.
+
 ### [PDF Tools](pdf-tools/index.html)
 Merge, split, and compress PDF files directly in your browser. Supports drag-and-drop, custom page ranges, and local-only processing.
 

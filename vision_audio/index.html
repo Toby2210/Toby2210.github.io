@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="version" content="1.7.0">
+    <title>Vision Audio</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header-row">
+            <div class="header-titles">
+                <h1>Vision Audio</h1>
+                <p class="tagline">
+                    <span data-i18n="tagline"></span>
+                    <span id="app-version" class="app-version"></span>
+                </p>
+            </div>
+            <button type="button" id="lang-toggle" class="btn-lang" data-i18n="langToggle"></button>
+        </div>
+
+        <section class="notice" aria-label="Usage">
+            <p><strong data-i18n="noticeWhy"></strong> <span data-i18n="noticeWhyBody"></span></p>
+            <p class="notice-limit" data-i18n="noticeLimit"></p>
+        </section>
+
+        <section class="controls">
+            <h2 data-i18n="listenMode"></h2>
+            <div class="mode-selector" role="radiogroup">
+                <label class="mode-card">
+                    <input type="radio" name="capture-mode" value="display" checked>
+                    <span class="mode-title" data-i18n="modeDisplayTitle"></span>
+                    <span class="mode-desc" data-i18n="modeDisplayDesc"></span>
+                </label>
+                <label class="mode-card">
+                    <input type="radio" name="capture-mode" value="loopback">
+                    <span class="mode-title" data-i18n="modeLoopbackTitle"></span>
+                    <span class="mode-desc" data-i18n="modeLoopbackDesc"></span>
+                </label>
+                <label class="mode-card">
+                    <input type="radio" name="capture-mode" value="mic">
+                    <span class="mode-title" data-i18n="modeMicTitle"></span>
+                    <span class="mode-desc" data-i18n="modeMicDesc"></span>
+                </label>
+            </div>
+
+            <div id="loopback-wrap" class="loopback-wrap hidden">
+                <label for="loopback-device" data-i18n="inputDeviceLabel"></label>
+                <select id="loopback-device">
+                    <option value="" data-i18n="loopbackPlaceholder"></option>
+                </select>
+                <button type="button" id="refresh-devices" class="btn-secondary" data-i18n="refreshDevices"></button>
+            </div>
+
+            <div class="threshold-row">
+                <label for="sensitivity" data-i18n="sensitivity"></label>
+                <input type="range" id="sensitivity" min="0.001" max="0.08" step="0.001" value="0.012">
+                <span id="sensitivity-value" class="mono">0.012</span>
+            </div>
+
+            <div class="action-row">
+                <button type="button" id="start-btn" class="btn-primary" data-i18n="start"></button>
+                <button type="button" id="stop-btn" class="btn-danger" disabled data-i18n="stop"></button>
+            </div>
+            <p id="status-message" class="status-message" role="status"></p>
+        </section>
+
+        <section class="monitor" aria-live="polite">
+            <div class="status-row">
+                <span id="activity-badge" class="badge badge-idle"></span>
+            </div>
+
+            <div class="volume-hero">
+                <div class="volume-hero-label" data-i18n="volumeNowLabel"></div>
+                <div class="volume-hero-row">
+                    <span id="volume-now-db" class="volume-hero-value mono">—</span>
+                    <span class="volume-hero-unit" data-i18n="dbUnit"></span>
+                </div>
+                <div class="volume-hero-sub">
+                    <span id="level-text" class="level-text mono"></span>
+                    <span id="peak-db-text" class="level-text mono peak-db-text"></span>
+                </div>
+            </div>
+
+            <div class="meter-wrap">
+                <div class="meter-label" data-i18n="meter"></div>
+                <div class="meter-track">
+                    <div id="meter-fill" class="meter-fill"></div>
+                </div>
+            </div>
+
+            <canvas id="waveform" width="760" height="120"></canvas>
+            <canvas id="spectrum" width="760" height="140"></canvas>
+        </section>
+
+        <section class="cal-panel" id="cal-panel">
+            <h2 data-i18n="heardVolumeTitle"></h2>
+            <p class="cal-intro" data-i18n="heardVolumeIntro"></p>
+
+            <div class="no-meter-block">
+                <h3 class="cal-subtitle" data-i18n="noMeterTitle"></h3>
+                <p class="hint" data-i18n="noMeterSubjectiveHint"></p>
+                <div class="subjective-cal-row">
+                    <button type="button" id="cal-anchor-85" class="btn-secondary cal-anchor-btn" data-i18n="calAnchor85"></button>
+                    <button type="button" id="cal-anchor-100" class="btn-secondary cal-anchor-btn" data-i18n="calAnchor100"></button>
+                </div>
+
+                <h3 class="cal-subtitle" data-i18n="presetEstimateTitle"></h3>
+                <p class="hint" data-i18n="presetEstimateHint"></p>
+                <div class="preset-row">
+                    <label for="preset-device" data-i18n="presetDeviceLabel"></label>
+                    <select id="preset-device">
+                        <option value="inear" data-i18n="presetInEar"></option>
+                        <option value="overear" data-i18n="presetOverEar"></option>
+                        <option value="speaker" data-i18n="presetSpeaker"></option>
+                        <option value="laptop" data-i18n="presetLaptop"></option>
+                    </select>
+                </div>
+                <div class="threshold-row">
+                    <label for="preset-volume" data-i18n="presetVolumeLabel"></label>
+                    <input type="range" id="preset-volume" min="1" max="100" step="1" value="50">
+                    <span id="preset-volume-value" class="mono">50%</span>
+                </div>
+                <button type="button" id="apply-preset-cal" class="btn-secondary" data-i18n="applyPresetBtn"></button>
+            </div>
+
+            <details class="meter-details">
+                <summary data-i18n="haveMeterTitle"></summary>
+                <ol class="cal-steps">
+                    <li data-i18n="calStep1"></li>
+                    <li data-i18n="calStep2"></li>
+                    <li data-i18n="calStep3"></li>
+                </ol>
+                <div class="calibrate-now-row">
+                    <label for="meter-reading" data-i18n="meterReadingLabel"></label>
+                    <input type="number" id="meter-reading" class="spl-ref-input mono" min="30" max="130" step="1" placeholder="65">
+                    <span class="calibration-unit">dBA</span>
+                    <button type="button" id="apply-cal-btn" class="btn-secondary" data-i18n="applyCalBtn"></button>
+                </div>
+            </details>
+
+            <p id="cal-status" class="cal-status" role="status"></p>
+            <div id="who-verdict" class="who-verdict who-neutral" role="status">
+                <span data-i18n="whoVerdictLabel"></span>
+                <span id="who-verdict-text"></span>
+            </div>
+            <details class="who-details">
+                <summary data-i18n="whoRefTitle"></summary>
+                <ul class="who-ref-list">
+                    <li data-i18n="whoRef85"></li>
+                    <li data-i18n="whoRef100"></li>
+                    <li data-i18n="whoRefDisclaimer"></li>
+                </ul>
+            </details>
+        </section>
+
+        <section class="source-panel hidden" id="source-panel">
+            <h2 data-i18n="sourceTitle"></h2>
+            <dl class="source-list">
+                <div><dt data-i18n="sourceType"></dt><dd id="source-type">—</dd></div>
+                <div><dt data-i18n="sourceLabel"></dt><dd id="source-label">—</dd></div>
+                <div><dt data-i18n="sourceTracks"></dt><dd id="source-audio-tracks">—</dd></div>
+            </dl>
+            <p class="hint" data-i18n="sourceHint"></p>
+        </section>
+
+        <section class="rate-panel hidden" id="rate-panel">
+            <h2 data-i18n="rateTitle"></h2>
+            <dl class="source-list">
+                <div><dt data-i18n="captureSampleRate"></dt><dd id="rate-capture" class="mono">—</dd></div>
+                <div><dt data-i18n="contextSampleRate"></dt><dd id="rate-context" class="mono">—</dd></div>
+                <div><dt data-i18n="channels"></dt><dd id="rate-channels" class="mono">—</dd></div>
+                <div><dt data-i18n="spectrumRange"></dt><dd id="rate-spectrum" class="mono">—</dd></div>
+                <div><dt data-i18n="peakFrequency"></dt><dd id="rate-peak" class="mono">—</dd></div>
+                <div><dt data-i18n="defaultOutput"></dt><dd id="rate-output" class="mono">—</dd></div>
+            </dl>
+            <div class="exclusive-note">
+                <strong data-i18n="exclusiveNoteTitle"></strong>
+                <p data-i18n="exclusiveNote"></p>
+            </div>
+        </section>
+
+        <section class="tips">
+            <h2 data-i18n="tipsTitle"></h2>
+            <ul>
+                <li data-i18n="tip1"></li>
+                <li data-i18n="tip2"></li>
+                <li data-i18n="tip3"></li>
+                <li data-i18n="tipWhoMic"></li>
+                <li><span data-i18n="tip4Before"></span> <a href="https://vb-audio.com/Cable/" target="_blank" rel="noopener noreferrer">VB-Audio Virtual Cable</a> <span data-i18n="tip4After"></span></li>
+            </ul>
+        </section>
+    </div>
+    <video id="capture-keepalive" class="hidden" muted playsinline aria-hidden="true"></video>
+    <script src="js/i18n.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
