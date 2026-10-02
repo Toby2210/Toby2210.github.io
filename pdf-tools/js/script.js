@@ -365,6 +365,47 @@ function parsePageRangeGroups(input, totalPages) {
   return groups;
 }
 
+function flattenPageGroups(groups) {
+  const seen = new Set();
+  const indices = [];
+  for (const group of groups) {
+    for (const idx of group) {
+      if (!seen.has(idx)) {
+        seen.add(idx);
+        indices.push(idx);
+      }
+    }
+  }
+  return indices;
+}
+
+const SPLIT_IMAGE_DPI = 150;
+
+async function renderPdfPagesToJpegs(arrayBuffer, pageIndices, onProgress) {
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+  const scale = SPLIT_IMAGE_DPI / 72;
+  const quality = 0.85;
+  const outputs = [];
+
+  for (let i = 0; i < pageIndices.length; i++) {
+    const pageNum = pageIndices[i] + 1;
+    if (onProgress) onProgress(i, pageIndices.length, pageNum);
+
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    const ctx = canvas.getContext("2d");
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    const jpegBytes = await canvasToJpegBytes(canvas, quality);
+    outputs.push({ pageNum, bytes: jpegBytes });
+  }
+
+  return outputs;
+}
+
 async function createPdfFromPages(sourceDoc, pageIndices) {
   const newDoc = await PDFLib.PDFDocument.create();
   const copied = await newDoc.copyPages(sourceDoc, pageIndices);
@@ -383,40 +424,56 @@ splitButton.addEventListener("click", async () => {
     const buf = await readFileAsArrayBuffer(splitFile);
     const sourceDoc = await loadPdfDocument(buf);
     const mode = document.querySelector('input[name="splitMode"]:checked').value;
+    const format = document.querySelector('input[name="splitFormat"]:checked').value;
     const base = baseName(splitFile.name);
 
     if (mode === "every") {
       const zip = new JSZip();
-      for (let i = 0; i < splitPageCount; i++) {
-        setProgress(true, Math.round(((i + 0.5) / splitPageCount) * 100));
-        setStatus(`Splitting page ${i + 1}/${splitPageCount}...`);
-        const bytes = await createPdfFromPages(sourceDoc, [i]);
-        zip.file(`${base}-page-${i + 1}.pdf`, bytes);
-      }
-      const zipBlob = await zip.generateAsync({ type: "blob" });
-      downloadBlob(zipBlob, `${base}-split-pages.zip`);
-      setStatus(`Split complete! ${splitPageCount} files in ZIP.`);
-    } else {
-      const groups = parsePageRangeGroups(splitRanges.value, splitPageCount);
-
-      if (groups.length === 1) {
-        const bytes = await createPdfFromPages(sourceDoc, groups[0]);
-        downloadBlob(new Blob([bytes], { type: "application/pdf" }), `${base}-split.pdf`);
-        setStatus("Split complete! Download started.");
-      } else {
-        const zip = new JSZip();
-        for (let i = 0; i < groups.length; i++) {
-          setProgress(true, Math.round(((i + 0.5) / groups.length) * 100));
-          setStatus(`Creating output ${i + 1}/${groups.length}...`);
-          const bytes = await createPdfFromPages(sourceDoc, groups[i]);
-          const label = groups[i].length === 1
-            ? `page-${groups[i][0] + 1}`
-            : `pages-${groups[i][0] + 1}-${groups[i][groups[i].length - 1] + 1}`;
-          zip.file(`${base}-${label}.pdf`, bytes);
+      if (format === "pdf") {
+        for (let i = 0; i < splitPageCount; i++) {
+          setProgress(true, Math.round(((i + 0.5) / splitPageCount) * 100));
+          setStatus(`Splitting page ${i + 1}/${splitPageCount}...`);
+          const bytes = await createPdfFromPages(sourceDoc, [i]);
+          zip.file(`${base}-page-${i + 1}.pdf`, bytes);
         }
         const zipBlob = await zip.generateAsync({ type: "blob" });
+        downloadBlob(zipBlob, `${base}-split-pages.zip`);
+        setStatus(`Split complete! ${splitPageCount} PDFs in ZIP.`);
+      } else {
+        const indices = Array.from({ length: splitPageCount }, (_, i) => i);
+        const images = await renderPdfPagesToJpegs(buf, indices, (i, total, pageNum) => {
+          setProgress(true, Math.round(((i + 0.5) / total) * 100));
+          setStatus(`Rendering page ${pageNum}/${splitPageCount}...`);
+        });
+        images.forEach(({ pageNum, bytes }) => {
+          zip.file(`${base}-page-${pageNum}.jpg`, bytes);
+        });
+        const zipBlob = await zip.generateAsync({ type: "blob" });
+        downloadBlob(zipBlob, `${base}-split-pages.zip`);
+        setStatus(`Split complete! ${splitPageCount} images in ZIP.`);
+      }
+    } else {
+      const groups = parsePageRangeGroups(splitRanges.value, splitPageCount);
+      const pageIndices = flattenPageGroups(groups);
+
+      if (format === "pdf") {
+        setProgress(true, 50);
+        setStatus("Creating PDF...");
+        const bytes = await createPdfFromPages(sourceDoc, pageIndices);
+        downloadBlob(new Blob([bytes], { type: "application/pdf" }), `${base}-split.pdf`);
+        setStatus(`Split complete! ${pageIndices.length} page${pageIndices.length !== 1 ? "s" : ""} in one PDF.`);
+      } else {
+        const zip = new JSZip();
+        const images = await renderPdfPagesToJpegs(buf, pageIndices, (i, total, pageNum) => {
+          setProgress(true, Math.round(((i + 0.5) / total) * 100));
+          setStatus(`Rendering page ${pageNum} (${i + 1}/${total})...`);
+        });
+        images.forEach(({ pageNum, bytes }) => {
+          zip.file(`${base}-page-${pageNum}.jpg`, bytes);
+        });
+        const zipBlob = await zip.generateAsync({ type: "blob" });
         downloadBlob(zipBlob, `${base}-split.zip`);
-        setStatus(`Split complete! ${groups.length} files in ZIP.`);
+        setStatus(`Split complete! ${pageIndices.length} images in ZIP.`);
       }
     }
 

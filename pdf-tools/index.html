@@ -48,16 +48,22 @@
         </div>
         <div id="splitFileInfo" class="file-info hidden"></div>
 
+        <label class="field-label">Output format</label>
+        <div class="radio-group">
+          <label><input type="radio" name="splitFormat" value="pdf" checked> PDF</label>
+          <label><input type="radio" name="splitFormat" value="image"> Image (JPEG per page)</label>
+        </div>
+
         <label class="field-label">Split mode</label>
         <div class="radio-group">
-          <label><input type="radio" name="splitMode" value="every" checked> Every page (separate PDF per page)</label>
+          <label><input type="radio" name="splitMode" value="every" checked> Every page (one file per page)</label>
           <label><input type="radio" name="splitMode" value="custom"> Custom page ranges</label>
         </div>
 
         <div id="splitCustomGroup" class="hidden">
           <label class="field-label" for="splitRanges">Page ranges</label>
           <input type="text" id="splitRanges" placeholder="e.g. 1-3, 5, 7-10">
-          <p class="hint">Each comma-separated group becomes a separate output file.</p>
+          <p class="hint">Comma-separated ranges are combined into one output (e.g. 1-3, 7-9 → pages 1–3 and 7–9 in order).</p>
         </div>
 
         <button id="splitButton" class="primary-btn" disabled>Split PDF</button>
