@@ -1,0 +1,532 @@
+body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+      background-color: #f0f0f0;
+    }
+    #preview {
+      margin-top: 20px;
+      max-width: 100%;
+      border: 1px solid #ccc;
+      cursor: move;
+      touch-action: none;
+    }
+    .button-container {
+      margin: 20px 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    button, input[type="file"], input[type="number"] {
+      padding: 10px 20px;
+      font-size: 16px;
+      border-radius: 5px;
+      border: none;
+    }
+    input[type="file"], button {
+      cursor: pointer;
+      background-color: #007bff;
+      color: white;
+    }
+    input[type="number"] {
+      width: 100px;
+      background-color: #fff;
+    }
+    button:hover, input[type="file"]:hover {
+      background-color: #0056b3;
+    }
+    input[type="number"]:focus {
+      outline: none;
+      border: 2px solid #007bff;
+    }
+    #downloadButton {
+      display: none;
+      margin-top: 20px;
+      background-color: #28a745;
+      color: white;
+      border-radius: 5px;
+    }
+    #downloadButton:hover {
+      background-color: #218838;
+    }
+    .dragging {
+      opacity: 0.7;
+      border: 2px dashed #007bff;
+    }
+    .drop-target {
+      border: 2px solid #007bff;
+    }
+    #dragPreview {
+      position: fixed;
+      pointer-events: none;
+      z-index: 1000;
+      max-width: 100px;
+      max-height: 100px;
+      opacity: 0.8;
+      border: 2px solid #007bff;
+      border-radius: 5px;
+    }
+    #dragLabel {
+      position: fixed;
+      pointer-events: none;
+      z-index: 1001;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      font-size: 12px;
+      padding: 2px 5px;
+      border-radius: 3px;
+    }
+    /* Mode toggle styles */
+    .mode-toggle {
+      display: flex;
+      gap: 20px;
+      margin: 15px 0;
+      align-items: center;
+    }
+    .mode-toggle label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    .mode-toggle input[type="radio"] {
+      width: auto;
+      padding: 0;
+    }
+    /* Table mode styles */
+    #tableModeSettings {
+      display: none;
+      flex-direction: column;
+      gap: 15px;
+      width: 100%;
+      max-width: 1200px;
+      margin: 15px 0;
+      padding: 20px;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    #tableModeSettings.show {
+      display: flex;
+    }
+    .table-config {
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .table-config > * {
+      flex-shrink: 0;
+    }
+    .table-config label {
+      font-weight: bold;
+      white-space: nowrap;
+    }
+    .table-config input[type="number"] {
+      width: 100px;
+      padding: 8px 12px;
+    }
+    .table-config button, .table-config .mode-switch {
+      padding: 10px 25px;
+      white-space: nowrap;
+      cursor: pointer;
+      border: 2px solid #007bff;
+      border-radius: 5px;
+      background: white;
+      color: #007bff;
+      font-weight: bold;
+      transition: all 0.3s;
+    }
+    .table-config button:hover, .table-config .mode-switch:hover {
+      background: #007bff;
+      color: white;
+    }
+    .table-config .mode-switch.active {
+      background: #007bff;
+      color: white;
+      border-color: #0056b3;
+    }
+    .table-config .mode-switch.move-mode {
+      border-color: #007bff;
+    }
+    .table-config .mode-switch.resize-mode {
+      border-color: #28a745;
+    }
+    .table-config .mode-switch.resize-mode.active {
+      background: #28a745;
+      border-color: #1e7e34;
+    }
+    #tableResultContainer {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      margin: 20px 0;
+    }
+    #tableResultContainer.show {
+      display: flex;
+    }
+    #tablePreview {
+      max-width: 100%;
+      border: 1px solid #ccc;
+    }
+    #uploadedImagesContainer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 15px;
+      background: #f8f9fa;
+      border: 2px dashed #ccc;
+      border-radius: 8px;
+      min-height: 120px;
+      align-content: flex-start;
+    }
+    #uploadedImagesContainer.drag-over {
+      border-color: #007bff;
+      background: #e7f1ff;
+    }
+    .uploaded-thumb {
+      width: 100px;
+      height: 100px;
+      object-fit: cover;
+      border: 2px solid #ddd;
+      border-radius: 5px;
+      cursor: grab;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .uploaded-thumb:hover {
+      transform: scale(1.05);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    .uploaded-thumb.dragging {
+      opacity: 0.5;
+    }
+    #tableGridContainer {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 15px;
+      margin: 15px 0;
+    }
+    #tableGrid {
+      display: grid;
+      gap: 2px;
+      background: #ddd;
+      border: 2px solid #999;
+      padding: 2px;
+    }
+    .table-cell {
+      width: 150px;
+      height: 150px;
+      background: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.2s;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid #e0e0e0;
+    }
+    .table-cell:hover {
+      background: #e7f1ff;
+    }
+    .table-cell.drag-over {
+      background: #cce5ff;
+      border: 2px dashed #007bff;
+    }
+    .table-cell.has-image {
+      background: #f0f0f0;
+    }
+    .table-cell img.cell-image {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      cursor: move;
+      position: relative;
+      z-index: 1;
+      pointer-events: auto;
+    }
+    
+    /* Click on image to resize in resize mode */
+    .table-cell img.cell-image {
+      cursor: pointer;
+    }
+    .table-cell img.cell-image:hover {
+      outline: 2px solid #007bff;
+      outline-offset: 2px;
+    }
+    /* Size display */
+    .size-display {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.7);
+      color: white;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 3px;
+      pointer-events: none;
+      z-index: 10;
+      display: none;
+      white-space: nowrap;
+    }
+    .table-cell:hover .size-display {
+      display: block;
+    }
+    .table-cell .cell-number {
+      position: absolute;
+      top: 5px;
+      left: 5px;
+      background: rgba(0,0,0,0.5);
+      color: white;
+      font-size: 12px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      z-index: 20; /* Ensure it's on top of image */
+      pointer-events: none;
+    }
+    .table-cell .remove-btn {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      background: rgba(255,0,0,0.8);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      cursor: pointer;
+      font-size: 14px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      font-weight: bold;
+    }
+    .table-cell:hover .remove-btn {
+      display: flex;
+    }
+    .table-cell .remove-btn:hover {
+      background: rgba(200,0,0,0.9);
+      transform: scale(1.1);
+    }
+    .auto-fill-buttons {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .hidden {
+      display: none !important;
+    }
+    #originalModeSettings {
+      display: flex;
+    }
+    #originalModeSettings.hidden {
+      display: none;
+    }
+    #originalResultContainer {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      margin: 20px 0;
+    }
+    #originalResultContainer.show {
+      display: flex;
+    }
+    /* Tutorial section styles */
+    #tutorialSection {
+      margin-top: 30px;
+      padding: 0;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      max-width: 1000px;
+      width: 100%;
+    }
+    
+    .tutorial-step {
+      margin-bottom: 20px;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      border-left: 4px solid #007bff;
+    }
+    .tutorial-step h3 {
+      margin: 0 0 10px 0;
+      color: #007bff;
+      font-size: 16px;
+    }
+    .tutorial-step p {
+      margin: 5px 0;
+      color: #555;
+      line-height: 1.6;
+    }
+    .tutorial-step ul {
+      margin: 10px 0;
+      padding-left: 20px;
+    }
+    .tutorial-step li {
+      margin: 5px 0;
+      color: #555;
+    }
+    .tutorial-tip {
+      background: #fff3cd;
+      border-left-color: #ffc107;
+      padding: 12px 15px;
+      border-radius: 6px;
+      margin-top: 10px;
+    }
+    .tutorial-tip strong {
+      color: #856404;
+    }
+    .tutorial-note {
+      background: #d1ecf1;
+      border-left-color: #17a2b8;
+      padding: 12px 15px;
+      border-radius: 6px;
+      margin-top: 10px;
+    }
+    .tutorial-note strong {
+      color: #0c5460;
+    }
+    .method-box {
+      background: #e7f3ff;
+      border: 1px solid #b8daff;
+      border-radius: 6px;
+      padding: 15px;
+      margin: 10px 0;
+    }
+    .method-box h4 {
+      margin: 0 0 10px 0;
+      color: #004085;
+    }
+    /* Paste input field styles */
+    #pasteInputContainer {
+      margin-top: 15px;
+      width: 100%;
+      max-width: 600px;
+    }
+    #pasteInputLabel {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 8px;
+      color: #333;
+    }
+    #pasteInput {
+      width: 100%;
+      padding: 12px 15px;
+      font-size: 16px;
+      border: 2px dashed #007bff;
+      border-radius: 8px;
+      background-color: #f8f9fa;
+      color: #555;
+      box-sizing: border-box;
+      transition: border-color 0.2s, background-color 0.2s;
+      cursor: text;
+      min-height: 50px;
+      resize: vertical;
+    }
+    #pasteInput:focus {
+      outline: none;
+      border-color: #0056b3;
+      background-color: #e7f1ff;
+    }
+    #pasteInput::placeholder {
+      color: #999;
+    }
+    #pasteInput.has-text {
+      background-color: #fff;
+      border-style: solid;
+    }
+    #pasteInput.drag-over {
+      border-color: #28a745;
+      background-color: #d4edda;
+    }
+    .paste-hint {
+      font-size: 13px;
+      color: #666;
+      margin-top: 6px;
+      text-align: center;
+    }
+    .paste-hint kbd {
+      background: #e9ecef;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    .paste-status {
+      font-size: 14px;
+      animation: fadeIn 0.3s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+/* Collapsible tutorial (default closed) */
+#tutorialSection > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 20px 25px;
+  margin: 0;
+  color: #333;
+  font-size: 1.5em;
+  font-weight: bold;
+  border-bottom: 2px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  user-select: none;
+}
+#tutorialSection > summary::-webkit-details-marker {
+  display: none;
+}
+#tutorialSection .tutorial-toggle-btn {
+  flex-shrink: 0;
+  font-size: 1.25rem;
+  font-weight: normal;
+  color: #007bff;
+  width: 1.5em;
+  height: 1.5em;
+  line-height: 1.5em;
+  text-align: center;
+  border: 2px solid #007bff;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+#tutorialSection[open] > summary {
+  border-bottom-color: #007bff;
+}
+#tutorialSection .tutorial-body {
+  padding: 15px 25px 25px;
+}
+#tutorialSection #tutorialTitle {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  border: none;
+  padding: 0;
+}
+
+.app-version {
+  width: 100%;
+  max-width: 1000px;
+  margin: 24px 0 8px;
+  padding: 0 4px;
+  text-align: right;
+  font-size: 11px;
+  line-height: 1.3;
+  color: #888;
+  user-select: none;
+  flex-shrink: 0;
+}
